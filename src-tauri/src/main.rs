@@ -43,6 +43,32 @@ fn tts_say(text: String, lang: Option<String>) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn tts_say_windows(text: &str, lang: &str) -> Result<(), String> {
+    println!("Attempting TTS for lang: {}", lang);
+    // Try SAPI first (older, standard voices)
+    match tts_say_windows_sapi(text, lang) {
+        Ok(_) => {
+            println!("SAPI TTS succeeded");
+            Ok(())
+        },
+        Err(e) => {
+            // If SAPI fails (likely voice not found), try OneCore (modern voices)
+            println!("SAPI failed: {}. Trying OneCore...", e);
+            match tts_say_windows_onecore(text, lang) {
+                Ok(_) => {
+                    println!("OneCore TTS succeeded");
+                    Ok(())
+                },
+                Err(e) => {
+                    println!("OneCore TTS failed: {}", e);
+                    Err(e)
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn tts_say_windows_sapi(text: &str, lang: &str) -> Result<(), String> {
     // Map language codes to Windows SAPI culture codes
     let culture_code = match lang {
         "tr-TR" | "tr" => "tr-TR",
@@ -64,9 +90,11 @@ fn tts_say_windows(text: &str, lang: &str) -> Result<(), String> {
         
         if ($voice) {{
             $synth.SelectVoice($voice.VoiceInfo.Name)
+            $synth.Speak('{}')
+        }} else {{
+            Write-Error "Voice not found"
+            exit 1
         }}
-        
-        $synth.Speak('{}')
         $synth.Dispose()
         "#,
         culture_code,
@@ -80,7 +108,79 @@ fn tts_say_windows(text: &str, lang: &str) -> Result<(), String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("PowerShell TTS failed: {}", stderr));
+        return Err(format!("SAPI TTS failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn tts_say_windows_onecore(text: &str, lang: &str) -> Result<(), String> {
+    // Map language codes to Windows OneCore language codes
+    let lang_code = match lang {
+        "tr-TR" | "tr" => "tr-TR",
+        "en-US" | "en" => "en-US",
+        "en-GB" => "en-GB",
+        _ => "en-US", // Default fallback
+    };
+
+    // PowerShell script to use WinRT (OneCore) for TTS
+    // Note: This requires Windows 10/11
+    let ps_script = format!(
+        r#"
+        $text = '{}'
+        $lang = '{}'
+
+        try {{
+            # Load WinRT types
+            [Windows.Media.SpeechSynthesis.SpeechSynthesizer, Windows.Media.SpeechSynthesis, ContentType=WindowsRuntime] > $null
+            
+            $synth = New-Object Windows.Media.SpeechSynthesis.SpeechSynthesizer
+
+            # Find voice
+            $voice = $synth.AllVoices | Where-Object {{ $_.Language -eq $lang }} | Select-Object -First 1
+            if ($null -eq $voice) {{
+                Write-Error "Voice for language '$lang' not found in OneCore voices."
+                exit 1
+            }}
+            $synth.Voice = $voice
+
+            # Synthesize
+            $stream = $synth.SynthesizeTextToStreamAsync($text).GetAwaiter().GetResult()
+
+            # Save to temp file
+            $tempFile = [System.IO.Path]::GetTempFileName() + ".wav"
+            $fileStream = [System.IO.File]::Create($tempFile)
+            $dataReader = [Windows.Storage.Streams.DataReader]::FromBuffer($stream.GetInputStreamAt(0).ReadAsync($stream.Size).GetAwaiter().GetResult())
+            $bytes = New-Object byte[] $stream.Size
+            $dataReader.ReadBytes($bytes)
+            $fileStream.Write($bytes, 0, $bytes.Length)
+            $fileStream.Close()
+
+            # Play
+            $player = New-Object System.Media.SoundPlayer($tempFile)
+            $player.PlaySync()
+            $player.Dispose()
+
+            # Cleanup
+            Remove-Item $tempFile
+        }} catch {{
+            Write-Error $_.Exception.Message
+            exit 1
+        }}
+        "#,
+        text.replace("'", "''"), // Escape single quotes for PowerShell
+        lang_code
+    );
+
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
+        .output()
+        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("OneCore TTS failed: {}", stderr));
     }
 
     Ok(())
@@ -139,9 +239,21 @@ fn tts_say_linux(text: &str, lang: &str) -> Result<(), String> {
     Ok(())
 }
 
+
+
+#[tauri::command]
+fn list_ports() -> Result<Vec<String>, String> {
+    match serialport::available_ports() {
+        Ok(ports) => {
+            Ok(ports.into_iter().map(|p| p.port_name).collect())
+        }
+        Err(e) => Err(format!("Failed to list ports: {}", e)),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![tts_say])
+        .invoke_handler(tauri::generate_handler![tts_say, list_ports])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

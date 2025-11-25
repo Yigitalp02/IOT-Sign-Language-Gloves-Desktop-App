@@ -1,0 +1,39 @@
+{
+    "app": {
+        "title": "IoT İşaret Dili",
+        "subtitle": "Metin Okuma Demosu",
+        "footer": "Bu demo işletim sisteminizin yerel metin okuma motorunu kullanır. İnternet bağlantısı gerektirmez.",
+        "version": "Sürüm 0.1.0 | Bilgisayar Mühendisliği Bitirme Projesi | Yiğit Alp Bilgin"
+    },
+    "input": {
+        "label": "Konuşulacak metni girin:",
+        "placeholder": "Konuşulacak bir şeyler yazın..."
+    },
+    "buttons": {
+        "speak_tr": "Konuş (Türkçe)",
+        "speak_en": "Konuş (İngilizce)",
+        "connect": "Bağlan",
+        "disconnect": "Bağlantıyı Kes",
+        "scan": "Tara"
+    },
+    "connection": {
+        "title": "Cihaz Bağlantısı",
+        "connected": "Bağlı",
+        "disconnected": "Bağlantı Yok",
+        "no_ports": "Port bulunamadı"
+    },
+    "settings": {
+        "theme": "Tema",
+        "language": "Dil",
+        "light": "Açık",
+        "dark": "Koyu",
+        "system": "Sistem"
+    },
+    "status": {
+        "speaking_tr": "Türkçe konuşuluyor...",
+        "speaking_en": "İngilizce konuşuluyor...",
+        "success_tr": "Başarıyla Türkçe konuşuldu",
+        "success_en": "Başarıyla İngilizce konuşuldu",
+        "error_empty": "Hata: Lütfen konuşulacak bir metin girin."
+    }
+}

@@ -1,0 +1,39 @@
+{
+    "app": {
+        "title": "IoT Sign Language",
+        "subtitle": "Text-to-Speech Demo",
+        "footer": "This demo uses your operating system's native text-to-speech engine. No internet connection required.",
+        "version": "Version 0.1.0 | Computer Science Graduation Project | Yiğit Alp Bilgin"
+    },
+    "input": {
+        "label": "Enter text to speak:",
+        "placeholder": "Type something to be spoken..."
+    },
+    "buttons": {
+        "speak_tr": "Speak (Turkish)",
+        "speak_en": "Speak (English)",
+        "connect": "Connect",
+        "disconnect": "Disconnect",
+        "scan": "Scan"
+    },
+    "connection": {
+        "title": "Device Connection",
+        "connected": "Connected",
+        "disconnected": "Disconnected",
+        "no_ports": "No ports found"
+    },
+    "settings": {
+        "theme": "Theme",
+        "language": "Language",
+        "light": "Light",
+        "dark": "Dark",
+        "system": "System"
+    },
+    "status": {
+        "speaking_tr": "Speaking in Turkish...",
+        "speaking_en": "Speaking in English...",
+        "success_tr": "Successfully spoke in Turkish",
+        "success_en": "Successfully spoke in English",
+        "error_empty": "Error: Please enter some text to speak."
+    }
+}
