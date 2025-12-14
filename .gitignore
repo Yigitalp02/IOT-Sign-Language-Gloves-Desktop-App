@@ -19,6 +19,9 @@ dist-ssr
 # Generated files
 app-icon.png
 
+# Reference code (not part of our project)
+TelerehabilitationGloves-main/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
