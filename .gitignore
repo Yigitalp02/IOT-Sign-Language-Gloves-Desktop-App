@@ -34,3 +34,9 @@ app-icon.png
 src-tauri/target
 src-tauri/Cargo.lock
 
+# Separate Git Repos (ignore to prevent accidental commits)
+iot-sign-glove/
+mobile/
+
+# ML Models (large binary files)
+models/

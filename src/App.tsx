@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import ConnectionManager from "./components/ConnectionManager";
+import DataRecorder from "./components/DataRecorder";
 import { useTheme } from "./context/ThemeContext";
 import "./App.css";
 
@@ -117,6 +118,8 @@ function App() {
 
       <div className="content">
         <ConnectionManager />
+        
+        <DataRecorder />
 
         <div className="text-input-section">
           <label htmlFor="text-input" className="label">
