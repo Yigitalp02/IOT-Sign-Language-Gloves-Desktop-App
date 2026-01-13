@@ -35,8 +35,8 @@ body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
   transition: background-color 0.3s ease, color 0.3s ease;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow-y: auto;
 }
 
 .container {
@@ -45,7 +45,7 @@ body {
   padding: 1rem;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  min-height: 100vh;
   box-sizing: border-box;
 }
 
@@ -83,7 +83,6 @@ h1 {
   padding: 1.5rem;
   border: 1px solid var(--border-color);
   box-shadow: 0 25px 50px -12px var(--shadow-color);
-  overflow-y: auto;
 }
 
 .text-input-section {

@@ -2,8 +2,18 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import ConnectionManager from "./components/ConnectionManager";
 import DataRecorder from "./components/DataRecorder";
+import SimulatorControl from "./components/SimulatorControl";
 import { useTheme } from "./context/ThemeContext";
 import "./App.css";
+
+interface SensorData {
+  timestamp: number;
+  ch0: number;
+  ch1: number;
+  ch2: number;
+  ch3: number;
+  ch4: number;
+}
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -14,6 +24,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [sensorBuffer, setSensorBuffer] = useState<SensorData[]>([]);
+  const [clearBufferTrigger, setClearBufferTrigger] = useState(0);
 
   useEffect(() => {
     const loadVoices = () => {
@@ -117,7 +129,18 @@ function App() {
       </div>
 
       <div className="content">
-        <ConnectionManager />
+        <ConnectionManager 
+          onSensorBuffer={setSensorBuffer}
+          clearBufferTrigger={clearBufferTrigger}
+        />
+        
+        <SimulatorControl 
+          sensorBuffer={sensorBuffer} 
+          onClearBuffer={() => {
+            setSensorBuffer([]);
+            setClearBufferTrigger(prev => prev + 1); // Trigger ConnectionManager buffer clear
+          }}
+        />
         
         <DataRecorder />
 

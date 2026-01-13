@@ -12,7 +12,12 @@ interface SensorData {
     ch4: number;
 }
 
-export default function ConnectionManager() {
+interface ConnectionManagerProps {
+    onSensorBuffer?: (buffer: SensorData[]) => void;
+    clearBufferTrigger?: number; // When this changes, clear the buffer
+}
+
+export default function ConnectionManager({ onSensorBuffer, clearBufferTrigger }: ConnectionManagerProps) {
     const { t } = useTranslation();
     const [ports, setPorts] = useState<string[]>([]);
     const [selectedPort, setSelectedPort] = useState<string>("");
@@ -20,6 +25,15 @@ export default function ConnectionManager() {
     const [isScanning, setIsScanning] = useState(false);
     const [sensorData, setSensorData] = useState<SensorData | null>(null);
     const [errorMessage, setErrorMessage] = useState<string>("");
+    const [_sensorBuffer, setSensorBuffer] = useState<SensorData[]>([]);
+
+    // Clear internal buffer when trigger changes
+    useEffect(() => {
+        if (clearBufferTrigger !== undefined) {
+            console.log('[ConnectionManager] Clearing internal buffer');
+            setSensorBuffer([]);
+        }
+    }, [clearBufferTrigger]);
 
     const scanPorts = async () => {
         setIsScanning(true);
@@ -46,13 +60,29 @@ export default function ConnectionManager() {
             // Parse CSV: timestamp,ch0,ch1,ch2,ch3,ch4
             const parts = event.payload.split(',');
             if (parts.length === 6) {
-                setSensorData({
+                const newData = {
                     timestamp: parseInt(parts[0]),
                     ch0: parseInt(parts[1]),
                     ch1: parseInt(parts[2]),
                     ch2: parseInt(parts[3]),
                     ch3: parseInt(parts[4]),
                     ch4: parseInt(parts[5]),
+                };
+                
+                setSensorData(newData);
+                
+                // Add to buffer (keep last 200 samples for prediction)
+                setSensorBuffer((prev) => {
+                    const updated = [...prev, newData];
+                    // Keep only last 200 samples (2 seconds at 100Hz)
+                    const trimmed = updated.slice(-200);
+                    
+                    // Notify parent component
+                    if (onSensorBuffer) {
+                        onSensorBuffer(trimmed);
+                    }
+                    
+                    return trimmed;
                 });
             }
         });
@@ -78,6 +108,7 @@ export default function ConnectionManager() {
                 await invoke("disconnect_serial");
                 setIsConnected(false);
                 setSensorData(null);
+                setSensorBuffer([]);
                 setErrorMessage("");
             } catch (error) {
                 console.error("Failed to disconnect:", error);

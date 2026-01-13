@@ -152,14 +152,14 @@ export default function DataRecorder() {
             marginBottom: "1.5rem"
         }}>
             <h3 style={{ margin: "0 0 1rem 0", fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>
-                Data Recorder
+                {t("recorder.title")}
             </h3>
 
             {/* User & Session Info */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "1rem" }}>
                 <div>
                     <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.25rem" }}>
-                        User ID
+                        {t("recorder.user_id")}
                     </label>
                     <input
                         type="text"
@@ -178,7 +178,7 @@ export default function DataRecorder() {
                 </div>
                 <div>
                     <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.25rem" }}>
-                        Session ID
+                        {t("recorder.session_id")}
                     </label>
                     <input
                         type="text"
@@ -250,7 +250,7 @@ export default function DataRecorder() {
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "0.75rem", marginBottom: "1rem" }}>
                 <div>
                     <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.25rem" }}>
-                        Gesture to Record
+                        {t("recorder.gesture")}
                     </label>
                     <select
                         value={selectedGesture}
@@ -305,7 +305,7 @@ export default function DataRecorder() {
                     fontSize: "1rem"
                 }}
             >
-                {isRecording ? "⏹ Stop Recording" : "⏺ Start Recording"}
+                {isRecording ? t("buttons.stop_recording") : t("buttons.start_recording")}
             </button>
 
             <div style={{ marginTop: "0.75rem", fontSize: "0.75rem", color: "var(--text-secondary)", textAlign: "center" }}>
@@ -314,6 +314,15 @@ export default function DataRecorder() {
         </div>
     );
 }
+
+
+
+
+
+
+
+
+
 
 
 

@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::process::Command;
+use std::process::{Command, Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::fs::{create_dir_all, OpenOptions};
@@ -15,6 +15,11 @@ use serde::{Deserialize, Serialize};
 struct SerialState {
     port: Arc<Mutex<Option<Box<dyn serialport::SerialPort>>>>,
     is_connected: Arc<Mutex<bool>>,
+}
+
+// Global state for simulator process
+struct SimulatorState {
+    process: Arc<Mutex<Option<Child>>>,
 }
 
 /// Text-to-Speech command that uses OS-native TTS engines
@@ -375,6 +380,327 @@ fn save_recording(
     Ok(filepath.to_string_lossy().to_string())
 }
 
+/// Start the glove simulator
+#[tauri::command]
+fn start_simulator(
+    gesture: String,
+    state: State<'_, SimulatorState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    // Check if simulator is already running
+    let mut process_lock = state.process.lock().unwrap();
+    if process_lock.is_some() {
+        return Err("Simulator is already running. Stop it first.".to_string());
+    }
+
+    // Try to find the script - check bundled resources first (for release), then dev path
+    let script_path = if let Some(resource_dir) = app_handle.path_resolver().resource_dir() {
+        // Release build - scripts are bundled with directory structure preserved
+        // Tauri uses "_up_" to represent parent directory (..)
+        let bundled_script = resource_dir.join("_up_").join("iot-sign-glove").join("scripts").join("synthetic_asl_simulator.py");
+        
+        if bundled_script.exists() {
+            bundled_script
+        } else {
+            // Fallback to dev path
+            let current_dir = std::env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e))?;
+            let project_root = if current_dir.ends_with("src-tauri") {
+                current_dir.parent().unwrap_or(&current_dir).to_path_buf()
+            } else {
+                current_dir
+            };
+            project_root.join("iot-sign-glove").join("scripts").join("synthetic_asl_simulator.py")
+        }
+    } else {
+        // Dev build - use project path
+        let current_dir = std::env::current_dir()
+            .map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let project_root = if current_dir.ends_with("src-tauri") {
+            current_dir.parent().unwrap_or(&current_dir).to_path_buf()
+        } else {
+            current_dir
+        };
+        project_root.join("iot-sign-glove").join("scripts").join("synthetic_asl_simulator.py")
+    };
+    
+    if !script_path.exists() {
+        return Err(format!("Simulator script not found at: {}", script_path.display()));
+    }
+
+    // Start the Python simulator process (hide console window on Windows)
+    let mut command = Command::new("python");
+    command
+        .arg(script_path)
+        .arg("--port")
+        .arg("COM3")
+        .arg("--gesture")
+        .arg(&gesture)
+        .arg("--loop")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    
+    // On Windows, hide the console window
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    
+    let child = command
+        .spawn()
+        .map_err(|e| format!("Failed to start simulator: {}", e))?;
+
+    *process_lock = Some(child);
+    drop(process_lock);
+
+    Ok(())
+}
+
+/// Stop the glove simulator
+#[tauri::command]
+fn stop_simulator(state: State<'_, SimulatorState>) -> Result<(), String> {
+    let mut process_lock = state.process.lock().unwrap();
+    
+    if let Some(mut child) = process_lock.take() {
+        // Try to kill the process gracefully
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    
+    // Also try to kill any orphaned Python simulator processes
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", "python.exe", "/FI", "WINDOWTITLE eq glove_simulator*"])
+            .output();
+    }
+    
+    Ok(())
+}
+
+/// Debug: Save buffer to file and analyze it
+#[tauri::command]
+fn debug_buffer(samples: Vec<SensorSample>) -> Result<String, String> {
+    if samples.is_empty() {
+        return Err("No samples in buffer".to_string());
+    }
+    
+    // Save to debug file
+    let temp_dir = std::env::temp_dir();
+    let debug_file = temp_dir.join("buffer_debug.csv");
+    
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&debug_file)
+        .map_err(|e| format!("Failed to create debug file: {}", e))?;
+    
+    // Write CSV header
+    writeln!(file, "ch0,ch1,ch2,ch3,ch4")
+        .map_err(|e| format!("Failed to write header: {}", e))?;
+    
+    // Write samples
+    for sample in &samples {
+        writeln!(file, "{},{},{},{},{}", 
+            sample.ch0, sample.ch1, sample.ch2, sample.ch3, sample.ch4)
+            .map_err(|e| format!("Failed to write sample: {}", e))?;
+    }
+    
+    drop(file);
+    
+    // Run analysis script
+    let current_dir = std::env::current_dir()
+        .map_err(|e| format!("Failed to get current directory: {}", e))?;
+    
+    let project_root = if current_dir.ends_with("src-tauri") {
+        current_dir.parent().unwrap_or(&current_dir).to_path_buf()
+    } else {
+        current_dir
+    };
+    
+    let script_path = project_root.join("iot-sign-glove").join("scripts").join("analyze_buffer.py");
+    
+    let output = Command::new("python")
+        .arg(script_path)
+        .arg(&debug_file)
+        .output()
+        .map_err(|e| format!("Failed to run analysis: {}", e))?;
+    
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    
+    if !output.status.success() {
+        return Err(format!("Analysis failed:\n{}\n{}", stdout, stderr));
+    }
+    
+    Ok(stdout)
+}
+
+/// Force kill all Python processes that might be simulators
+#[tauri::command]
+fn kill_all_simulators() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("taskkill")
+            .args(["/F", "/IM", "python.exe"])
+            .output()
+            .map_err(|e| format!("Failed to kill processes: {}", e))?;
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(format!("Killed Python processes:\n{}", stdout))
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        let output = Command::new("pkill")
+            .args(["-f", "synthetic_asl_simulator.py"])
+            .output()
+            .map_err(|e| format!("Failed to kill processes: {}", e))?;
+        
+        Ok("Killed simulator processes".to_string())
+    }
+}
+
+/// Check if simulator is running
+#[tauri::command]
+fn is_simulator_running(state: State<'_, SimulatorState>) -> Result<bool, String> {
+    let process_lock = state.process.lock().unwrap();
+    Ok(process_lock.is_some())
+}
+
+#[derive(Serialize)]
+struct PredictionResult {
+    letter: String,
+    confidence: f64,
+    pattern: String,
+    debug_log: String,
+}
+
+/// Predict gesture from buffered sensor data
+#[tauri::command]
+fn predict_gesture(samples: Vec<SensorSample>, app_handle: tauri::AppHandle) -> Result<PredictionResult, String> {
+    if samples.is_empty() {
+        return Err("No samples provided".to_string());
+    }
+
+    if samples.len() < 50 {
+        return Err(format!("Not enough samples. Need at least 50, got {}", samples.len()));
+    }
+
+    // Save samples to temporary CSV file
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join("temp_predict.csv");
+    
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&temp_file)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+
+    // Write CSV header
+    writeln!(file, "ch0,ch1,ch2,ch3,ch4")
+        .map_err(|e| format!("Failed to write header: {}", e))?;
+
+    // Write samples
+    for sample in &samples {
+        writeln!(file, "{},{},{},{},{}", 
+            sample.ch0, sample.ch1, sample.ch2, sample.ch3, sample.ch4)
+            .map_err(|e| format!("Failed to write sample: {}", e))?;
+    }
+
+    drop(file);
+
+    // Try to find the script - check bundled resources first (for release), then dev path
+    let script_path = if let Some(resource_dir) = app_handle.path_resolver().resource_dir() {
+        // Release build - scripts are bundled with directory structure preserved
+        // Tauri uses "_up_" to represent parent directory (..)
+        let bundled_script = resource_dir.join("_up_").join("iot-sign-glove").join("scripts").join("predict_rule_based.py");
+        if bundled_script.exists() {
+            bundled_script
+        } else {
+            // Fallback to dev path
+            let current_dir = std::env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e))?;
+            let project_root = if current_dir.ends_with("src-tauri") {
+                current_dir.parent().unwrap_or(&current_dir).to_path_buf()
+            } else {
+                current_dir
+            };
+            project_root.join("iot-sign-glove").join("scripts").join("predict_rule_based.py")
+        }
+    } else {
+        // Dev build - use project path
+        let current_dir = std::env::current_dir()
+            .map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let project_root = if current_dir.ends_with("src-tauri") {
+            current_dir.parent().unwrap_or(&current_dir).to_path_buf()
+        } else {
+            current_dir
+        };
+        project_root.join("iot-sign-glove").join("scripts").join("predict_rule_based.py")
+    };
+    
+    if !script_path.exists() {
+        return Err(format!("Prediction script not found at: {}", script_path.display()));
+    }
+
+    let output = Command::new("python")
+        .env("PYTHONWARNINGS", "ignore")  // Suppress warnings
+        .arg(script_path)
+        .arg("--file")
+        .arg(&temp_file)
+        .output()
+        .map_err(|e| format!("Failed to run prediction: {}", e))?;
+
+    // Capture full output for debugging
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    
+    let debug_log = format!("=== PREDICTION DEBUG LOG ===\n\nSTDOUT:\n{}\n\nSTDERR:\n{}\n", 
+        stdout, 
+        if stderr.is_empty() { "(none)" } else { &stderr }
+    );
+
+    if !output.status.success() {
+        return Err(format!("Prediction failed:\n{}", debug_log));
+    }
+
+    // Parse output
+    let mut letter = String::from("?");
+    let mut confidence = 0.0;
+    let mut description = String::new();
+    
+    for line in stdout.lines() {
+        if line.starts_with("ASL_LETTER:") {
+            letter = line.replace("ASL_LETTER:", "").trim().to_string();
+        } else if line.starts_with("CONFIDENCE:") {
+            if let Ok(conf) = line.replace("CONFIDENCE:", "").trim().parse::<f64>() {
+                confidence = conf;
+            }
+        } else if line.starts_with("DESCRIPTION:") {
+            description = line.replace("DESCRIPTION:", "").trim().to_string();
+        }
+    }
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(temp_file);
+
+    Ok(PredictionResult {
+        letter,
+        confidence,
+        pattern: if !description.is_empty() {
+            format!("{} ({} samples)", description, samples.len())
+        } else {
+            format!("Analyzed {} samples", samples.len())
+        },
+        debug_log,
+    })
+}
+
 
 fn main() {
     tauri::Builder::default()
@@ -382,13 +708,22 @@ fn main() {
             port: Arc::new(Mutex::new(None)),
             is_connected: Arc::new(Mutex::new(false)),
         })
+        .manage(SimulatorState {
+            process: Arc::new(Mutex::new(None)),
+        })
         .invoke_handler(tauri::generate_handler![
             tts_say,
             list_ports,
             connect_serial,
             disconnect_serial,
             is_serial_connected,
-            save_recording
+            save_recording,
+            start_simulator,
+            stop_simulator,
+            is_simulator_running,
+            predict_gesture,
+            kill_all_simulators,
+            debug_buffer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
