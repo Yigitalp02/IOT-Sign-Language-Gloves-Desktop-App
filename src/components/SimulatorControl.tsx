@@ -31,7 +31,7 @@ export default function SimulatorControl({ sensorBuffer, onClearBuffer }: Simula
     const [showDebugLog, setShowDebugLog] = useState(false);
     const [autoStopEnabled, setAutoStopEnabled] = useState(true);
 
-    const aslLetters = ["A", "F", "E", "I", "D", "S", "Y"];
+    const aslLetters = ["A", "B", "C", "D", "E", "F", "I", "K", "O", "S", "T", "V", "W", "X", "Y"];
 
     // Auto-stop simulator when buffer is full (if enabled)
     useEffect(() => {

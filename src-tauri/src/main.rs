@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
 use serialport::{available_ports, SerialPortType};
 use tauri::{Manager, State};
 use serde::{Deserialize, Serialize};
@@ -618,7 +617,7 @@ fn predict_gesture(samples: Vec<SensorSample>, app_handle: tauri::AppHandle) -> 
     let script_path = if let Some(resource_dir) = app_handle.path_resolver().resource_dir() {
         // Release build - scripts are bundled with directory structure preserved
         // Tauri uses "_up_" to represent parent directory (..)
-        let bundled_script = resource_dir.join("_up_").join("iot-sign-glove").join("scripts").join("predict_rule_based.py");
+        let bundled_script = resource_dir.join("_up_").join("iot-sign-glove").join("scripts").join("predict_ml.py");
         if bundled_script.exists() {
             bundled_script
         } else {
@@ -630,7 +629,7 @@ fn predict_gesture(samples: Vec<SensorSample>, app_handle: tauri::AppHandle) -> 
             } else {
                 current_dir
             };
-            project_root.join("iot-sign-glove").join("scripts").join("predict_rule_based.py")
+            project_root.join("iot-sign-glove").join("scripts").join("predict_ml.py")
         }
     } else {
         // Dev build - use project path
@@ -641,7 +640,7 @@ fn predict_gesture(samples: Vec<SensorSample>, app_handle: tauri::AppHandle) -> 
         } else {
             current_dir
         };
-        project_root.join("iot-sign-glove").join("scripts").join("predict_rule_based.py")
+        project_root.join("iot-sign-glove").join("scripts").join("predict_ml.py")
     };
     
     if !script_path.exists() {

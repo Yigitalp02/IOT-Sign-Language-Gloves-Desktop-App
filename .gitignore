@@ -43,3 +43,7 @@ mobile/
 
 # ML Models (large binary files)
 models/
+
+# External datasets (not part of this project)
+ASL-Deep-Learning-Model/
+Smart-Glove-Sign-Language-Predictor/

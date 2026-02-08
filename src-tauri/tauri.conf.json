@@ -30,7 +30,8 @@
         "icons/icon.ico"
       ],
       "resources": [
-        "../iot-sign-glove/scripts/*.py"
+        "../iot-sign-glove/scripts/*.py",
+        "../iot-sign-glove/models/rf_asl_15letters.pkl"
       ]
     },
     "security": {
