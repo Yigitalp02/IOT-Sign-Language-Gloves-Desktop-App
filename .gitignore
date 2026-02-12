@@ -40,6 +40,7 @@ src-tauri/Cargo.lock
 # Separate Git Repos (ignore to prevent accidental commits)
 iot-sign-glove/
 mobile/
+asl-ml-server/
 
 # ML Models (large binary files)
 models/
