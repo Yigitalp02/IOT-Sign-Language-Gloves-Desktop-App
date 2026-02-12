@@ -578,9 +578,23 @@ struct PredictionResult {
     debug_log: String,
 }
 
-/// Predict gesture from buffered sensor data
+#[derive(Serialize)]
+struct ApiRequest {
+    flex_sensors: Vec<Vec<f64>>,
+    device_id: String,
+}
+
+#[derive(Deserialize)]
+struct ApiResponse {
+    letter: String,
+    confidence: f64,
+    processing_time_ms: f64,
+    model_name: String,
+}
+
+/// Predict gesture from buffered sensor data using cloud API
 #[tauri::command]
-fn predict_gesture(samples: Vec<SensorSample>, app_handle: tauri::AppHandle) -> Result<PredictionResult, String> {
+async fn predict_gesture(samples: Vec<SensorSample>) -> Result<PredictionResult, String> {
     if samples.is_empty() {
         return Err("No samples provided".to_string());
     }
@@ -589,113 +603,78 @@ fn predict_gesture(samples: Vec<SensorSample>, app_handle: tauri::AppHandle) -> 
         return Err(format!("Not enough samples. Need at least 50, got {}", samples.len()));
     }
 
-    // Save samples to temporary CSV file
-    let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join("temp_predict.csv");
-    
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&temp_file)
-        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    // Convert sensor samples to API format: Vec<Vec<f64>>
+    // Each inner vec is [ch0, ch1, ch2, ch3, ch4] for one timestamp
+    let flex_sensors: Vec<Vec<f64>> = samples.iter()
+        .map(|s| vec![
+            s.ch0 as f64,
+            s.ch1 as f64,
+            s.ch2 as f64,
+            s.ch3 as f64,
+            s.ch4 as f64,
+        ])
+        .collect();
 
-    // Write CSV header
-    writeln!(file, "ch0,ch1,ch2,ch3,ch4")
-        .map_err(|e| format!("Failed to write header: {}", e))?;
-
-    // Write samples
-    for sample in &samples {
-        writeln!(file, "{},{},{},{},{}", 
-            sample.ch0, sample.ch1, sample.ch2, sample.ch3, sample.ch4)
-            .map_err(|e| format!("Failed to write sample: {}", e))?;
-    }
-
-    drop(file);
-
-    // Try to find the script - check bundled resources first (for release), then dev path
-    let script_path = if let Some(resource_dir) = app_handle.path_resolver().resource_dir() {
-        // Release build - scripts are bundled with directory structure preserved
-        // Tauri uses "_up_" to represent parent directory (..)
-        let bundled_script = resource_dir.join("_up_").join("iot-sign-glove").join("scripts").join("predict_ml.py");
-        if bundled_script.exists() {
-            bundled_script
-        } else {
-            // Fallback to dev path
-            let current_dir = std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {}", e))?;
-            let project_root = if current_dir.ends_with("src-tauri") {
-                current_dir.parent().unwrap_or(&current_dir).to_path_buf()
-            } else {
-                current_dir
-            };
-            project_root.join("iot-sign-glove").join("scripts").join("predict_ml.py")
-        }
-    } else {
-        // Dev build - use project path
-        let current_dir = std::env::current_dir()
-            .map_err(|e| format!("Failed to get current directory: {}", e))?;
-        let project_root = if current_dir.ends_with("src-tauri") {
-            current_dir.parent().unwrap_or(&current_dir).to_path_buf()
-        } else {
-            current_dir
-        };
-        project_root.join("iot-sign-glove").join("scripts").join("predict_ml.py")
+    // Create API request
+    let request_body = ApiRequest {
+        flex_sensors,
+        device_id: "desktop-app".to_string(),
     };
-    
-    if !script_path.exists() {
-        return Err(format!("Prediction script not found at: {}", script_path.display()));
-    }
 
-    let output = Command::new("python")
-        .env("PYTHONWARNINGS", "ignore")  // Suppress warnings
-        .arg(script_path)
-        .arg("--file")
-        .arg(&temp_file)
-        .output()
-        .map_err(|e| format!("Failed to run prediction: {}", e))?;
-
-    // Capture full output for debugging
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    // API endpoint
+    const API_URL: &str = "https://api.ybilgin.com/predict";
     
-    let debug_log = format!("=== PREDICTION DEBUG LOG ===\n\nSTDOUT:\n{}\n\nSTDERR:\n{}\n", 
-        stdout, 
-        if stderr.is_empty() { "(none)" } else { &stderr }
+    // Make HTTP POST request
+    let client = reqwest::Client::new();
+    let start_time = std::time::Instant::now();
+    
+    let response = client
+        .post(API_URL)
+        .json(&request_body)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("API request failed: {}", e))?;
+
+    let status = response.status();
+    let response_text = response.text().await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    let elapsed = start_time.elapsed();
+
+    // Create debug log
+    let debug_log = format!(
+        "=== CLOUD API PREDICTION ===\n\n\
+        API: {}\n\
+        Status: {}\n\
+        Samples sent: {}\n\
+        Round-trip time: {:.1}ms\n\n\
+        Response:\n{}",
+        API_URL,
+        status,
+        samples.len(),
+        elapsed.as_secs_f64() * 1000.0,
+        response_text
     );
 
-    if !output.status.success() {
-        return Err(format!("Prediction failed:\n{}", debug_log));
+    // Check status
+    if !status.is_success() {
+        return Err(format!("API returned error {}:\n{}", status, response_text));
     }
 
-    // Parse output
-    let mut letter = String::from("?");
-    let mut confidence = 0.0;
-    let mut description = String::new();
-    
-    for line in stdout.lines() {
-        if line.starts_with("ASL_LETTER:") {
-            letter = line.replace("ASL_LETTER:", "").trim().to_string();
-        } else if line.starts_with("CONFIDENCE:") {
-            if let Ok(conf) = line.replace("CONFIDENCE:", "").trim().parse::<f64>() {
-                confidence = conf;
-            }
-        } else if line.starts_with("DESCRIPTION:") {
-            description = line.replace("DESCRIPTION:", "").trim().to_string();
-        }
-    }
-
-    // Clean up temp file
-    let _ = std::fs::remove_file(temp_file);
+    // Parse JSON response
+    let api_response: ApiResponse = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Failed to parse API response: {}\n\nResponse was:\n{}", e, response_text))?;
 
     Ok(PredictionResult {
-        letter,
-        confidence,
-        pattern: if !description.is_empty() {
-            format!("{} ({} samples)", description, samples.len())
-        } else {
-            format!("Analyzed {} samples", samples.len())
-        },
+        letter: api_response.letter,
+        confidence: api_response.confidence,
+        pattern: format!(
+            "Cloud API • {} samples • {:.1}ms server • {:.1}ms total",
+            samples.len(),
+            api_response.processing_time_ms,
+            elapsed.as_secs_f64() * 1000.0
+        ),
         debug_log,
     })
 }
