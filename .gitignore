@@ -38,6 +38,10 @@ app-icon.png
 src-tauri/target
 src-tauri/Cargo.lock
 
-
-# Mobile App (Separate Repo)
-# mobile/
+# Separate repositories (not part of desktop app)
+mobile/
+ASL-ML-Inference-API/
+iot-sign-glove/
+ASL-Deep-Learning-Model/
+Smart-Glove-Sign-Language-Predictor/
+TelerehabilitationGloves-main/
