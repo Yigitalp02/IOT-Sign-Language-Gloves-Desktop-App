@@ -1,328 +1,140 @@
-import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/tauri";
-import { listen } from "@tauri-apps/api/event";
-import { useTranslation } from "react-i18next";
+import React, { useState, useCallback } from 'react';
+import { useTheme } from '../context/ThemeContext';
+import './DataRecorder.css';
 
-interface SensorSample {
-    timestamp: number;
-    ch0: number;
-    ch1: number;
-    ch2: number;
-    ch3: number;
-    ch4: number;
+interface DataRecorderProps {
+  isRecording: boolean;
+  onStartRecording: (letter: string) => void;
+  onStopRecording: () => void;
+  recordedSamples: number;
+  targetSamples: number;
+  isConnected: boolean;
 }
 
-interface CalibrationData {
-    baseline: number[];
-    maxbend: number[];
-}
+const ASL_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'I', 'K', 'O', 'S', 'T', 'V', 'W', 'X', 'Y'];
 
-export default function DataRecorder() {
-    const { t } = useTranslation();
-    const [isRecording, setIsRecording] = useState(false);
-    const [isCalibrating, setIsCalibrating] = useState<'baseline' | 'maxbend' | null>(null);
-    const [selectedGesture, setSelectedGesture] = useState("A");
-    const [userId, setUserId] = useState("U001");
-    const [sessionId, setSessionId] = useState("S1");
-    const [recordedSamples, setRecordedSamples] = useState(0);
-    const [calibration, setCalibration] = useState<CalibrationData | null>(null);
-    
-    const samplesBuffer = useRef<SensorSample[]>([]);
-    const calibrationBuffer = useRef<SensorSample[]>([]);
+export default function DataRecorder({
+  isRecording,
+  onStartRecording,
+  onStopRecording,
+  recordedSamples,
+  targetSamples,
+  isConnected
+}: DataRecorderProps) {
+  const { theme } = useTheme();
+  const [selectedLetter, setSelectedLetter] = useState('A');
 
-    useEffect(() => {
-        const unlisten = listen<string>("sensor-data", (event) => {
-            // Parse CSV: timestamp,ch0,ch1,ch2,ch3,ch4
-            const parts = event.payload.split(',');
-            if (parts.length === 6) {
-                const sample: SensorSample = {
-                    timestamp: parseInt(parts[0]),
-                    ch0: parseInt(parts[1]),
-                    ch1: parseInt(parts[2]),
-                    ch2: parseInt(parts[3]),
-                    ch3: parseInt(parts[4]),
-                    ch4: parseInt(parts[5]),
-                };
+  const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const textPrimary = isDark ? '#f1f5f9' : '#111827';
+  const textSecondary = isDark ? '#94a3b8' : '#6b7280';
+  const accentPrimary = isDark ? '#3b82f6' : '#10b981';
+  const bgCard = isDark ? 'rgba(30, 41, 59, 0.7)' : '#ffffff';
+  const bgSecondary = isDark ? 'rgba(51, 65, 85, 0.5)' : '#f9fafb';
+  const borderColor = isDark ? 'rgba(255, 255, 255, 0.1)' : '#d1d5db';
 
-                // Add to recording buffer if recording
-                if (isRecording) {
-                    samplesBuffer.current.push(sample);
-                    setRecordedSamples(samplesBuffer.current.length);
-                }
+  const progress = (recordedSamples / targetSamples) * 100;
 
-                // Add to calibration buffer if calibrating
-                if (isCalibrating) {
-                    calibrationBuffer.current.push(sample);
-                }
-            }
-        });
+  return (
+    <div className="data-recorder-container" style={{ backgroundColor: bgCard, borderColor: borderColor }}>
+      <div className="data-recorder-header">
+        <h3 className="data-recorder-title" style={{ color: textPrimary }}>
+          📊 Data Recording for Training
+        </h3>
+        {!isConnected && (
+          <p className="warning-text" style={{ color: '#fb923c' }}>
+            ⚠️ Connect glove first!
+          </p>
+        )}
+      </div>
 
-        return () => {
-            unlisten.then(fn => fn());
-        };
-    }, [isRecording, isCalibrating]);
+      <div className="recording-info" style={{ backgroundColor: bgSecondary, borderColor: borderColor }}>
+        <p style={{ color: textSecondary, marginBottom: '0.5rem' }}>
+          Collect labeled samples for each ASL letter to train a better model.
+        </p>
+        <p style={{ color: textSecondary, fontSize: '0.85rem' }}>
+          <strong>Best Practice:</strong> Record 10-15 samples per letter, varying hand position slightly each time.
+        </p>
+      </div>
 
-    const startRecording = () => {
-        samplesBuffer.current = [];
-        setRecordedSamples(0);
-        setIsRecording(true);
-    };
-
-    const stopRecording = async () => {
-        setIsRecording(false);
-        
-        if (samplesBuffer.current.length === 0) {
-            alert("No samples recorded!");
-            return;
-        }
-
-        // Save to CSV
-        try {
-            await invoke("save_recording", {
-                samples: samplesBuffer.current,
-                gesture: selectedGesture,
-                userId,
-                sessionId,
-                calibration: calibration || { baseline: [500, 520, 510, 505, 515], maxbend: [850, 870, 860, 855, 865] }
-            });
-            
-            alert(`✓ Saved ${samplesBuffer.current.length} samples for gesture "${selectedGesture}"`);
-            samplesBuffer.current = [];
-            setRecordedSamples(0);
-        } catch (error) {
-            alert(`Error saving: ${error}`);
-        }
-    };
-
-    const startCalibration = (type: 'baseline' | 'maxbend') => {
-        calibrationBuffer.current = [];
-        setIsCalibrating(type);
-        
-        // Auto-stop after 2 seconds
-        setTimeout(() => {
-            finishCalibration(type);
-        }, 2000);
-    };
-
-    const finishCalibration = (type: 'baseline' | 'maxbend') => {
-        setIsCalibrating(null);
-
-        if (calibrationBuffer.current.length === 0) {
-            alert("No calibration data collected!");
-            return;
-        }
-
-        // Calculate average for each channel
-        const numSamples = calibrationBuffer.current.length;
-        const avg = [0, 0, 0, 0, 0];
-        
-        calibrationBuffer.current.forEach(sample => {
-            avg[0] += sample.ch0;
-            avg[1] += sample.ch1;
-            avg[2] += sample.ch2;
-            avg[3] += sample.ch3;
-            avg[4] += sample.ch4;
-        });
-
-        const result = avg.map(sum => Math.round(sum / numSamples));
-
-        if (type === 'baseline') {
-            setCalibration({
-                baseline: result,
-                maxbend: calibration?.maxbend || [850, 870, 860, 855, 865]
-            });
-        } else {
-            setCalibration({
-                baseline: calibration?.baseline || [500, 520, 510, 505, 515],
-                maxbend: result
-            });
-        }
-
-        alert(`✓ ${type} calibrated: [${result.join(', ')}]`);
-    };
-
-    const gestures = ["REST", "A", "B", "C", "D", "E", "F", "G", "H"];
-
-    return (
-        <div style={{
-            background: "var(--bg-card)",
-            padding: "1.5rem",
-            borderRadius: "12px",
-            border: "1px solid var(--border-color)",
-            marginBottom: "1.5rem"
-        }}>
-            <h3 style={{ margin: "0 0 1rem 0", fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>
-                {t("recorder.title")}
-            </h3>
-
-            {/* User & Session Info */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "1rem" }}>
-                <div>
-                    <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.25rem" }}>
-                        {t("recorder.user_id")}
-                    </label>
-                    <input
-                        type="text"
-                        value={userId}
-                        onChange={(e) => setUserId(e.target.value)}
-                        disabled={isRecording}
-                        style={{
-                            width: "100%",
-                            padding: "0.5rem",
-                            borderRadius: "8px",
-                            border: "1px solid var(--border-color)",
-                            background: "var(--input-bg)",
-                            color: "var(--text-primary)"
-                        }}
-                    />
-                </div>
-                <div>
-                    <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.25rem" }}>
-                        {t("recorder.session_id")}
-                    </label>
-                    <input
-                        type="text"
-                        value={sessionId}
-                        onChange={(e) => setSessionId(e.target.value)}
-                        disabled={isRecording}
-                        style={{
-                            width: "100%",
-                            padding: "0.5rem",
-                            borderRadius: "8px",
-                            border: "1px solid var(--border-color)",
-                            background: "var(--input-bg)",
-                            color: "var(--text-primary)"
-                        }}
-                    />
-                </div>
+      {!isRecording ? (
+        <>
+          <div className="letter-selector">
+            <label style={{ color: textPrimary, fontWeight: 600 }}>Select Letter to Record:</label>
+            <div className="letter-grid">
+              {ASL_LETTERS.map(letter => (
+                <button
+                  key={letter}
+                  className={`letter-button ${selectedLetter === letter ? 'selected' : ''}`}
+                  style={{
+                    backgroundColor: selectedLetter === letter ? accentPrimary : bgSecondary,
+                    color: selectedLetter === letter ? '#ffffff' : textPrimary,
+                    borderColor: borderColor
+                  }}
+                  onClick={() => setSelectedLetter(letter)}
+                >
+                  {letter}
+                </button>
+              ))}
             </div>
+          </div>
 
-            {/* Calibration */}
-            <div style={{ marginBottom: "1rem", padding: "0.75rem", background: "var(--bg-secondary)", borderRadius: "8px" }}>
-                <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: "0.5rem", color: "var(--text-primary)" }}>
-                    Calibration {calibration ? "✓" : "(Not calibrated)"}
-                </div>
-                <div style={{ display: "flex", gap: "0.5rem" }}>
-                    <button
-                        onClick={() => startCalibration('baseline')}
-                        disabled={isRecording || isCalibrating !== null}
-                        style={{
-                            flex: 1,
-                            padding: "0.5rem",
-                            borderRadius: "8px",
-                            background: isCalibrating === 'baseline' ? "#3b82f6" : "var(--accent-primary)",
-                            color: "white",
-                            border: "none",
-                            fontWeight: 600,
-                            cursor: isRecording || isCalibrating !== null ? "not-allowed" : "pointer",
-                            fontSize: "0.85rem"
-                        }}
-                    >
-                        {isCalibrating === 'baseline' ? "Calibrating..." : "Baseline (straight)"}
-                    </button>
-                    <button
-                        onClick={() => startCalibration('maxbend')}
-                        disabled={isRecording || isCalibrating !== null}
-                        style={{
-                            flex: 1,
-                            padding: "0.5rem",
-                            borderRadius: "8px",
-                            background: isCalibrating === 'maxbend' ? "#3b82f6" : "var(--accent-secondary)",
-                            color: "white",
-                            border: "none",
-                            fontWeight: 600,
-                            cursor: isRecording || isCalibrating !== null ? "not-allowed" : "pointer",
-                            fontSize: "0.85rem"
-                        }}
-                    >
-                        {isCalibrating === 'maxbend' ? "Calibrating..." : "Max Bend (fist)"}
-                    </button>
-                </div>
-                {calibration && (
-                    <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                        Baseline: [{calibration.baseline.join(', ')}]<br/>
-                        Max Bend: [{calibration.maxbend.join(', ')}]
-                    </div>
-                )}
-            </div>
+          <button
+            className="record-button"
+            style={{
+              backgroundColor: isConnected ? '#ef4444' : '#6b7280',
+              cursor: isConnected ? 'pointer' : 'not-allowed'
+            }}
+            onClick={() => isConnected && onStartRecording(selectedLetter)}
+            disabled={!isConnected}
+          >
+            🔴 Start Recording "{selectedLetter}"
+          </button>
+        </>
+      ) : (
+        <div className="recording-active">
+          <div className="recording-banner" style={{ backgroundColor: '#ef4444' + '20', borderColor: '#ef4444' }}>
+            <span className="recording-pulse" style={{ backgroundColor: '#ef4444' }}>🔴</span>
+            <p style={{ color: '#ef4444', fontWeight: 600 }}>
+              Recording "{selectedLetter}" - Hold the sign steady!
+            </p>
+          </div>
 
-            {/* Gesture Selection & Recording */}
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "0.75rem", marginBottom: "1rem" }}>
-                <div>
-                    <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.25rem" }}>
-                        {t("recorder.gesture")}
-                    </label>
-                    <select
-                        value={selectedGesture}
-                        onChange={(e) => setSelectedGesture(e.target.value)}
-                        disabled={isRecording}
-                        style={{
-                            width: "100%",
-                            padding: "0.5rem",
-                            borderRadius: "8px",
-                            border: "1px solid var(--border-color)",
-                            background: "var(--input-bg)",
-                            color: "var(--text-primary)"
-                        }}
-                    >
-                        {gestures.map(g => (
-                            <option key={g} value={g}>{g}</option>
-                        ))}
-                    </select>
-                </div>
-                <div>
-                    <label style={{ fontSize: "0.85rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.25rem" }}>
-                        Samples
-                    </label>
-                    <div style={{
-                        padding: "0.5rem",
-                        borderRadius: "8px",
-                        background: "var(--input-bg)",
-                        border: "1px solid var(--border-color)",
-                        textAlign: "center",
-                        fontWeight: 600,
-                        color: "var(--text-primary)"
-                    }}>
-                        {recordedSamples}
-                    </div>
-                </div>
-            </div>
-
-            {/* Record Button */}
-            <button
-                onClick={isRecording ? stopRecording : startRecording}
+          <div className="progress-section">
+            <div className="progress-bar-container" style={{ backgroundColor: bgSecondary }}>
+              <div
+                className="progress-bar-fill"
                 style={{
-                    width: "100%",
-                    padding: "0.75rem",
-                    borderRadius: "8px",
-                    background: isRecording
-                        ? "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)"
-                        : "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                    color: "white",
-                    border: "none",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    fontSize: "1rem"
+                  width: `${progress}%`,
+                  backgroundColor: progress >= 100 ? '#10b981' : accentPrimary
                 }}
-            >
-                {isRecording ? t("buttons.stop_recording") : t("buttons.start_recording")}
-            </button>
-
-            <div style={{ marginTop: "0.75rem", fontSize: "0.75rem", color: "var(--text-secondary)", textAlign: "center" }}>
-                {isRecording ? "Recording... Perform the gesture now!" : "Tip: Hold gesture steady for 2-3 seconds while recording"}
+              />
             </div>
+            <p className="progress-text" style={{ color: textPrimary }}>
+              {recordedSamples} / {targetSamples} samples ({Math.round(progress)}%)
+            </p>
+          </div>
+
+          <button
+            className="stop-button"
+            style={{ backgroundColor: '#6b7280' }}
+            onClick={onStopRecording}
+          >
+            ⏹ Stop Recording
+          </button>
         </div>
-    );
+      )}
+
+      <div className="tips-section" style={{ backgroundColor: bgSecondary, borderColor: borderColor }}>
+        <p style={{ color: textSecondary, fontWeight: 600, marginBottom: '0.5rem' }}>📝 Recording Tips:</p>
+        <ul style={{ color: textSecondary, fontSize: '0.85rem', paddingLeft: '1.5rem' }}>
+          <li>Make the ASL sign and hold it steady for 3 seconds</li>
+          <li>Record each letter 10-15 times with slight variations</li>
+          <li>Vary: hand angle, finger tightness, wrist position</li>
+          <li>Keep consistent speed and timing</li>
+          <li>Data auto-saves to: <code>recordings/glove_data.csv</code></li>
+        </ul>
+      </div>
+    </div>
+  );
 }
-
-
-
-
-
-
-
-
-
-
-
 

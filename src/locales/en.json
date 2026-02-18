@@ -1,9 +1,9 @@
 {
     "app": {
         "title": "IoT Sign Language",
-        "subtitle": "Text-to-Speech Demo",
-        "footer": "This demo uses your operating system's native text-to-speech engine. No internet connection required.",
-        "version": "Version 0.1.0 | Computer Science Graduation Project | Yiğit Alp Bilgin"
+        "subtitle": "ASL Recognition System",
+        "footer": "Real-time American Sign Language recognition using ML and sensor glove technology.",
+        "version": "Version 0.4.0 | Computer Science Graduation Project | Yiğit Alp Bilgin"
     },
     "input": {
         "label": "Enter text to speak:",
@@ -12,60 +12,29 @@
     "buttons": {
         "speak_tr": "Speak (Turkish)",
         "speak_en": "Speak (English)",
-        "connect": "Connect",
+        "connect": "Connect Glove",
         "disconnect": "Disconnect",
         "scan": "Scan",
-        "stop": "Stop",
-        "kill_all": "Kill All",
-        "predict": "Predict Current Gesture",
-        "analyzing": "Analyzing...",
-        "clear": "Clear",
-        "start_recording": "Start Recording",
-        "stop_recording": "Stop Recording",
-        "save": "Save Recording",
-        "calibrate": "Calibrate",
-        "debug": "Debug"
+        "stop": "Stop"
     },
     "connection": {
-        "title": "Device Connection",
+        "title": "Glove Connection",
         "connected": "Connected",
         "disconnected": "Disconnected",
-        "no_ports": "No ports found"
+        "no_ports": "No devices found"
     },
     "simulator": {
-        "title": "Simulator & Prediction",
-        "auto_stop": "Auto-Stop at 200 Samples",
-        "auto_stop_on": "Simulator will stop automatically when buffer is full (for prediction)",
-        "auto_stop_off": "Simulator runs continuously (for data recording)",
-        "status": "Simulator Status",
-        "running": "Running: ASL",
-        "stopped": "Stopped",
-        "select_letter": "Select ASL Letter to Simulate:",
-        "buffer": "Buffer",
-        "samples": "samples",
-        "need_more": "need more",
-        "collecting": "collecting more...",
-        "full": "full, auto-stopped",
-        "continuous": "recording continuously",
-        "latest_sample": "Latest sample (of",
-        "prediction_result": "Prediction Result:",
-        "asl_letter": "ASL Letter:",
-        "confidence": "Confidence:",
-        "analyzed": "Analyzed"
+        "title": "ASL Simulator",
+        "description": "Select a letter to simulate sensor data",
+        "simulating": "Simulating"
     },
-    "recorder": {
-        "title": "Data Recorder",
-        "subtitle": "Record sensor data for training",
-        "user_id": "User ID",
-        "session_id": "Session ID",
-        "gesture": "Gesture",
-        "select_gesture": "Select gesture",
-        "recording": "Recording...",
-        "samples_collected": "samples collected",
-        "saved_success": "Recording saved successfully!",
-        "calibration": "Calibration",
-        "straight_fingers": "Straight Fingers (Baseline)",
-        "fist": "Fist (Max Bend)"
+    "prediction": {
+        "analyzing": "Analyzing",
+        "waiting": "Waiting for sensor data...",
+        "confidence": "Confidence",
+        "samples": "Samples",
+        "time": "Time",
+        "model": "Model"
     },
     "settings": {
         "theme": "Theme",

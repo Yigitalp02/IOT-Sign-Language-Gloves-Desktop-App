@@ -16,11 +16,12 @@ dist
 dist-ssr
 *.local
 
+# Environment variables
+.env
+.env.local
+
 # Generated files
 app-icon.png
-
-# Reference code (not part of our project)
-TelerehabilitationGloves-main/
 
 # Editor directories and files
 .vscode/*
@@ -37,14 +38,6 @@ TelerehabilitationGloves-main/
 src-tauri/target
 src-tauri/Cargo.lock
 
-# Separate Git Repos (ignore to prevent accidental commits)
-iot-sign-glove/
-mobile/
-asl-ml-server/
 
-# ML Models (large binary files)
-models/
-
-# External datasets (not part of this project)
-ASL-Deep-Learning-Model/
-Smart-Glove-Sign-Language-Predictor/
+# Mobile App (Separate Repo)
+# mobile/
