@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useTheme } from '../context/ThemeContext';
+// import { useTheme } from '../context/ThemeContext'; // Removed unused
 import './QuickDemo.css';
 
 interface QuickDemoProps {
@@ -18,12 +18,12 @@ const QuickDemo: React.FC<QuickDemoProps> = ({
   isActive, 
   onStopSimulator, 
   quickDemoCallbackRef, 
-  detectedWord, 
+  // detectedWord, // Removed unused
   onClearWord, 
   onResetWordFinalization,
   getCurrentWord 
 }) => {
-  const { theme } = useTheme();
+  // const { theme } = useTheme(); // Removed unused
   const [customWord, setCustomWord] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [currentLetterIndex, setCurrentLetterIndex] = useState(-1);

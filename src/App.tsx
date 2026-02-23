@@ -20,11 +20,7 @@ const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position
 const MODEL_BASELINES = [440, 612, 618, 548, 528];  // straight (lower values for flex sensors)
 const MODEL_MAXBENDS = [650, 900, 900, 850, 800];   // bent (higher values for flex sensors)
 
-interface PredictionRecord {
-  letter: string;
-  confidence: number;
-  timestamp: number;
-}
+// Removed unused interface PredictionRecord
 
 interface DebugLogData {
   simulationStartTime?: number;
@@ -79,7 +75,7 @@ function App() {
   const [detectedLetters, setDetectedLetters] = useState<string[]>([]);
   const detectedLettersRef = useRef<string[]>([]);
   const [recognitionMode, setRecognitionMode] = useState<'manual' | 'single' | 'continuous'>('manual');
-  const [minConfidence, setMinConfidence] = useState(0.6);
+  const [minConfidence] = useState(0.6); // Removed unused setter
   const [isWordFinalized, setIsWordFinalized] = useState(false);
 
   // Real-time prediction state (for continuous streaming)
@@ -87,7 +83,7 @@ function App() {
   const realTimeBufferRef = useRef<number[][]>([]);
   const lastPredictedLetterRef = useRef<string>('');
   const lastPredictionTimeRef = useRef<number>(0);
-  const MIN_PREDICTION_INTERVAL = 700; // Minimum 2 seconds between predictions to avoid rate limits
+  const MIN_PREDICTION_INTERVAL = 200; // 5 predictions/sec = 300/min (backend limit: 1500/min)
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -496,12 +492,25 @@ function App() {
       .replace(/:/g, '-')
       .slice(0, 19); // YYYY-MM-DD-HH-MM-SS
 
-    // CSV format: label,ch0,ch1,ch2,ch3,ch4
-    let csvContent = 'label,ch0,ch1,ch2,ch3,ch4\n';
+    // CSV format: label,ch0,ch1,ch2,ch3,ch4 (NORMALIZED 0-1)
+    let csvContent = 'label,ch0_norm,ch1_norm,ch2_norm,ch3_norm,ch4_norm\n';
     
     allData.forEach(({ letter, samples }) => {
       samples.forEach(sample => {
-        csvContent += `${letter},${sample.join(',')}\n`;
+        // Normalize each sensor value to 0-1 range using current calibration
+        const normalizedSample = sample.map((value, fingerIndex) => {
+          const baseline = baselines[fingerIndex];  // Higher value (straight)
+          const maxbend = maxbends[fingerIndex];    // Lower value (bent)
+          
+          // For thermistors: baseline > maxbend
+          // Normalized: 0 = straight (baseline), 1 = bent (maxbend)
+          const normalized = (baseline - value) / (baseline - maxbend);
+          const clamped = Math.max(0, Math.min(1, normalized));
+          
+          return clamped.toFixed(4); // Save with 4 decimal precision
+        });
+        
+        csvContent += `${letter},${normalizedSample.join(',')}\n`;
       });
     });
 
@@ -510,12 +519,13 @@ function App() {
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `glove_data_${uniqueLetters}_${timestamp}.csv`;
+    link.download = `glove_data_NORMALIZED_${uniqueLetters}_${timestamp}.csv`;
     link.click();
     window.URL.revokeObjectURL(url);
 
-    console.log(`[App] Exported ${allData.length} recordings to CSV: glove_data_${uniqueLetters}_${timestamp}.csv`);
-    alert(`✅ Data exported! ${allData.reduce((acc, r) => acc + r.samples.length, 0)} samples saved to CSV`);
+    console.log(`[App] Exported ${allData.length} recordings to NORMALIZED CSV`);
+    console.log(`[App] Using calibration - Baselines: ${baselines}, Maxbends: ${maxbends}`);
+    alert(`✅ Data exported as NORMALIZED values! ${allData.reduce((acc, r) => acc + r.samples.length, 0)} samples saved to CSV`);
   };
 
   const handleClearWord = () => {
@@ -604,6 +614,8 @@ function App() {
           onCalibrationComplete={handleCalibrationComplete}
           isConnected={connectedDevice !== null}
           currentSample={currentSample}
+          currentBaselines={baselines}
+          currentMaxbends={maxbends}
         />
 
         {/* Recognition Mode Selector */}
@@ -657,8 +669,8 @@ function App() {
             {recognitionMode === 'manual' 
               ? 'Click "Record Sign" button to manually capture 200 samples for prediction.'
               : recognitionMode === 'single'
-              ? '🔴 LIVE: Real-time predictions with rolling 200-sample window. Updates every 2 seconds.'
-              : '🔴 LIVE: Real-time predictions building words. Updates every 2 seconds. Hold each letter steady!'}
+              ? '🔴 LIVE: Real-time predictions with rolling 200-sample window. Updates 5x per second!'
+              : '🔴 LIVE: Real-time predictions building words. Updates 5x per second - hold each letter steady!'}
           </p>
         </div>
 
@@ -807,8 +819,8 @@ function App() {
               marginBottom: '0.5rem'
             }}>
               {recognitionMode === 'single' 
-                ? 'Predictions every 2 seconds with rolling 200-sample window. Hold your hand steady!'
-                : 'Building words in real-time. New predictions every 2 seconds as you sign.'}
+                ? 'Predictions 5x per second with rolling 200-sample window. Hold your hand steady!'
+                : 'Building words in real-time. New predictions 5x per second as you sign.'}
             </p>
             <div style={{
               fontSize: '0.85rem',
@@ -837,6 +849,7 @@ function App() {
           currentWord={detectedLetters.join('')}
           onClearWord={handleClearWord}
           onDeleteLetter={handleDeleteLetter}
+          isRealTimeMode={recognitionMode === 'single' || recognitionMode === 'continuous'}
         />
 
         {/* Data Recorder */}

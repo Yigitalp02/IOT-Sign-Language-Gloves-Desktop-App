@@ -1,26 +1,42 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { PredictionResponse } from '../services/apiService';
 import './PredictionView.css';
 
-// Import ASL sign images
+// Import ASL sign images properly for Vite production builds
+import A_img from '../assets/asl/A.png';
+import B_img from '../assets/asl/B.png';
+import C_img from '../assets/asl/C.png';
+import D_img from '../assets/asl/D.png';
+import E_img from '../assets/asl/E.png';
+import F_img from '../assets/asl/F.png';
+import I_img from '../assets/asl/I.png';
+import K_img from '../assets/asl/K.png';
+import O_img from '../assets/asl/O.png';
+import S_img from '../assets/asl/S.png';
+import T_img from '../assets/asl/T.png';
+import V_img from '../assets/asl/V.png';
+import W_img from '../assets/asl/W.png';
+import X_img from '../assets/asl/X.png';
+import Y_img from '../assets/asl/Y.png';
+
 const ASL_SIGNS: { [key: string]: string } = {
-  A: '/src/assets/asl/A.png',
-  B: '/src/assets/asl/B.png',
-  C: '/src/assets/asl/C.png',
-  D: '/src/assets/asl/D.png',
-  E: '/src/assets/asl/E.png',
-  F: '/src/assets/asl/F.png',
-  I: '/src/assets/asl/I.png',
-  K: '/src/assets/asl/K.png',
-  O: '/src/assets/asl/O.png',
-  S: '/src/assets/asl/S.png',
-  T: '/src/assets/asl/T.png',
-  V: '/src/assets/asl/V.png',
-  W: '/src/assets/asl/W.png',
-  X: '/src/assets/asl/X.png',
-  Y: '/src/assets/asl/Y.png',
+  A: A_img,
+  B: B_img,
+  C: C_img,
+  D: D_img,
+  E: E_img,
+  F: F_img,
+  I: I_img,
+  K: K_img,
+  O: O_img,
+  S: S_img,
+  T: T_img,
+  V: V_img,
+  W: W_img,
+  X: X_img,
+  Y: Y_img,
 };
 
 interface PredictionViewProps {
@@ -32,6 +48,7 @@ interface PredictionViewProps {
   currentWord?: string;
   onClearWord?: () => void;
   onDeleteLetter?: () => void;
+  isRealTimeMode?: boolean; // New prop to indicate real-time mode (single/continuous)
 }
 
 export default function PredictionView({ 
@@ -42,7 +59,8 @@ export default function PredictionView({
   isContinuousMode = false, 
   currentWord = '', 
   onClearWord, 
-  onDeleteLetter 
+  onDeleteLetter,
+  isRealTimeMode = false 
 }: PredictionViewProps) {
   const { t } = useTranslation();
   const { theme } = useTheme();
@@ -77,7 +95,9 @@ export default function PredictionView({
     );
   }
 
-  if (isLoading) {
+  // In real-time mode, NEVER show loading - keep the last prediction visible
+  // Only show loading in manual mode when first starting
+  if (isLoading && !isRealTimeMode) {
     return (
       <div className="prediction-container">
         <div className="loading-icon">...</div>
@@ -181,6 +201,28 @@ export default function PredictionView({
 
   return (
     <div className="prediction-container">
+      {/* Real-time mode indicator */}
+      {isRealTimeMode && (
+        <div style={{
+          position: 'absolute',
+          top: '0.75rem',
+          right: '0.75rem',
+          padding: '0.25rem 0.5rem',
+          borderRadius: '4px',
+          backgroundColor: '#ef4444',
+          color: 'white',
+          fontSize: '0.625rem',
+          fontWeight: '700',
+          letterSpacing: '0.05em',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.25rem'
+        }}>
+          <span style={{ fontSize: '0.5rem' }}>🔴</span>
+          LIVE
+        </div>
+      )}
+      
       <div className="main-result">
         <div 
           className="letter-circle" 
@@ -206,6 +248,7 @@ export default function PredictionView({
       {ASL_SIGNS[prediction.letter] && (
         <div className="single-letter-sign-container">
           <img 
+            key={prediction.letter}
             src={ASL_SIGNS[prediction.letter]} 
             alt={`ASL sign for ${prediction.letter}`}
             className={`single-letter-sign-image ${theme === 'dark' ? 'dark-mode' : ''}`}

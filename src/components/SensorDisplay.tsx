@@ -1,4 +1,4 @@
-import { useTheme } from '../context/ThemeContext';
+// import { useTheme } from '../context/ThemeContext'; // Removed unused
 import './SensorDisplay.css';
 
 interface SensorDisplayProps {
@@ -22,7 +22,7 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
   baselines,
   maxbends
 }) => {
-  const { theme } = useTheme();
+  // const { theme } = useTheme(); // Removed unused
 
   // Calculate color based on calibration (if provided) or use per-finger defaults
   const getBarColor = (value: number, fingerIndex: number) => {

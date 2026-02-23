@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useTheme } from '../context/ThemeContext';
+// import { useTheme } from '../context/ThemeContext'; // Removed unused
 import './DebugLog.css';
 
 interface DebugLogData {
@@ -25,7 +25,7 @@ interface DebugLogProps {
 }
 
 export default function DebugLog({ data }: DebugLogProps) {
-  const { theme } = useTheme();
+  // const { theme } = useTheme(); // Removed unused
   const [isVisible, setIsVisible] = useState(true);
 
   if (!data) return null;

@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useTheme } from '../context/ThemeContext';
+// import { useTheme } from '../context/ThemeContext'; // Removed unused
 import './SimulatorControl.css';
 
 interface SimulatorControlProps {
@@ -55,7 +55,7 @@ export default function SimulatorControl({
   onClearBuffer
 }: SimulatorControlProps) {
   const { t } = useTranslation();
-  const { theme } = useTheme();
+  // const { theme } = useTheme(); // Removed unused
   const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
   const [sampleCount, setSampleCount] = useState(0);
 

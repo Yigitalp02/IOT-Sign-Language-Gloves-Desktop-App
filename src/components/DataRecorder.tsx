@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import './DataRecorder.css';
 
