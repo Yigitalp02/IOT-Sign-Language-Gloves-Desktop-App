@@ -85,10 +85,18 @@ function App() {
   const lastPredictionTimeRef = useRef<number>(0);
   const MIN_PREDICTION_INTERVAL = 200; // 5 predictions/sec = 300/min (backend limit: 1500/min)
 
+  // Dev: use local model instead of cloud API
+  const [useLocalModel, setUseLocalModel] = useState(false);
+
   // Keep ref in sync with state
   useEffect(() => {
     detectedLettersRef.current = detectedLetters;
   }, [detectedLetters]);
+
+  // Sync local model switch with apiService
+  useEffect(() => {
+    apiService.setUseLocalModel(useLocalModel);
+  }, [useLocalModel]);
   
   // Calibration handler
   const handleCalibrationComplete = useCallback((newBaselines: number[], newMaxbends: number[]) => {
@@ -121,6 +129,13 @@ function App() {
       simulationStartTimeRef.current = Date.now();
     }
   }, [isSimulating]);
+
+  // When using simulator, auto-enable local model (96% trained on same data)
+  useEffect(() => {
+    if (isSimulating && !useLocalModel) {
+      setUseLocalModel(true);
+    }
+  }, [isSimulating, useLocalModel]);
 
   // Auto-restart collection in continuous mode
   useEffect(() => {
@@ -185,34 +200,39 @@ function App() {
     setIsAnalyzing(true);
     setPredictionError(null);
 
-    // Convert thermistor readings to flex sensor format for ML model
-    // Step 1: Normalize thermistor values (0 = straight, 1 = bent)
-    // Step 2: Denormalize to flex sensor ranges the model expects
-    const convertedSamples = samples.map(sample => 
+    // Use normalized model: send 0-1 values (local dev model or cloud normalized)
+    // Use flex model: convert to legacy flex sensor range (440-900)
+    const useNormalizedModel = useLocalModel || import.meta.env.VITE_USE_NORMALIZED_MODEL === 'true';
+
+    // Simulator/Python script outputs match SimulatorControl's BASELINES/MAXBENDS; real glove uses user calibration
+    const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
+    const SIMULATOR_MAXBENDS = [2200, 1300, 1480, 1640, 1720];
+    // When using local model + serial: treat as Python simulator if uncalibrated (test_serial_simulator.py)
+    const useSerialSimulatorCal = useLocalModel && connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
+    const calBaselines = isSimulating ? SIMULATOR_BASELINES : (useSerialSimulatorCal ? SIMULATOR_BASELINES : baselines);
+    const calMaxbends = isSimulating ? SIMULATOR_MAXBENDS : (useSerialSimulatorCal ? SIMULATOR_MAXBENDS : maxbends);
+
+    const convertedSamples = samples.map(sample =>
       sample.map((value, fingerIndex) => {
-        const thermBaseline = baselines[fingerIndex];  // Higher value (straight)
-        const thermMaxBend = maxbends[fingerIndex];    // Lower value (bent)
-        
-        // Normalize thermistor reading (0 = straight, 1 = bent)
-        // For thermistors: baseline > maxBend, so we invert
+        const thermBaseline = calBaselines[fingerIndex];
+        const thermMaxBend = calMaxbends[fingerIndex];
+
+        // Normalize thermistor (0 = straight, 1 = bent)
         const normalized = (thermBaseline - value) / (thermBaseline - thermMaxBend);
-        const clampedNormalized = Math.max(0, Math.min(1, normalized));
-        
-        // Denormalize to flex sensor range (model expects flex sensor values)
-        // For flex sensors: baseline < maxBend
+        const clamped = Math.max(0, Math.min(1, normalized));
+
+        if (useNormalizedModel) {
+          return clamped; // Send 0-1 for normalized model
+        }
+        // Denormalize to flex range for legacy model
         const flexBaseline = MODEL_BASELINES[fingerIndex];
         const flexMaxBend = MODEL_MAXBENDS[fingerIndex];
-        const flexValue = flexBaseline + clampedNormalized * (flexMaxBend - flexBaseline);
-        
-        return Math.round(flexValue);
+        return Math.round(flexBaseline + clamped * (flexMaxBend - flexBaseline));
       })
     );
 
-    console.log('[App] Converting thermistor → flex sensor format for ML model');
-    console.log('[App] Raw thermistor (first):', samples[0]);
-    console.log('[App] Converted to flex sensor:', convertedSamples[0]);
-    console.log('[App] Raw thermistor (last):', samples[samples.length - 1]);
-    console.log('[App] Converted to flex sensor:', convertedSamples[convertedSamples.length - 1]);
+    console.log(`[App] Sending ${useNormalizedModel ? 'normalized 0-1' : 'flex sensor'} format`);
+    console.log('[App] First sample:', convertedSamples[0]);
 
     // Prepare debug data
     const debugData: DebugLogData = {
@@ -378,10 +398,11 @@ function App() {
     }
 
     // REAL-TIME CONTINUOUS STREAMING MODE
-    // Always maintain a rolling window of 200 samples and predict with throttling
+    // Rolling window: 50 samples (1 sec) = matches model training, faster letter transitions
+    const REALTIME_WINDOW = 50;
     if (recognitionMode === 'single' || recognitionMode === 'continuous') {
       // Add to rolling buffer
-      realTimeBufferRef.current = [...realTimeBufferRef.current, data].slice(-200); // Keep last 200 samples
+      realTimeBufferRef.current = [...realTimeBufferRef.current, data].slice(-REALTIME_WINDOW);
       
       // Update UI buffer for display
       setSensorBuffer(realTimeBufferRef.current);
@@ -391,8 +412,8 @@ function App() {
       const timeSinceLastPrediction = now - lastPredictionTimeRef.current;
       const canMakePrediction = timeSinceLastPrediction >= MIN_PREDICTION_INTERVAL;
       
-      // Only make predictions when we have at least 200 samples, enough time passed, and not already predicting
-      if (realTimeBufferRef.current.length >= 200 && !isRealTimePredicting.current && canMakePrediction) {
+      // Make predictions when we have enough samples (50 = 1 sec at 50Hz)
+      if (realTimeBufferRef.current.length >= REALTIME_WINDOW && !isRealTimePredicting.current && canMakePrediction) {
         isRealTimePredicting.current = true;
         lastPredictionTimeRef.current = now; // Update time immediately to prevent rapid firing
         
@@ -584,7 +605,38 @@ function App() {
           ASL Recognition
         </h2>
 
-        {/* Connection Manager (for future glove support) */}
+        {/* Dev: Use local model switch */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          padding: '0.5rem 0',
+          marginBottom: '0.5rem',
+          borderBottom: '1px solid var(--border-color)'
+        }}>
+          <label style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            cursor: 'pointer',
+            fontSize: '0.9rem',
+            color: 'var(--text-secondary)'
+          }}>
+            <input
+              type="checkbox"
+              checked={useLocalModel}
+              onChange={(e) => setUseLocalModel(e.target.checked)}
+            />
+            <span>Use local model (dev)</span>
+          </label>
+          {useLocalModel && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--accent-color)' }}>
+              localhost:8765 (96% model) — run: cd iot-sign-glove; python scripts/serve_local_model.py
+            </span>
+          )}
+        </div>
+
+        {/* Connection Manager */}
         <ConnectionManager 
           onSensorData={handleSensorData}
           onConnectionChange={(connected) => {
@@ -669,40 +721,50 @@ function App() {
             {recognitionMode === 'manual' 
               ? 'Click "Record Sign" button to manually capture 200 samples for prediction.'
               : recognitionMode === 'single'
-              ? '🔴 LIVE: Real-time predictions with rolling 200-sample window. Updates 5x per second!'
+              ? '🔴 LIVE: Real-time predictions with rolling 50-sample window (1 sec). Fast letter transitions!'
               : '🔴 LIVE: Real-time predictions building words. Updates 5x per second - hold each letter steady!'}
           </p>
         </div>
 
         {/* 3D Hand Visualization + Real-Time Sensor Display - Side by Side */}
+        {/* Use simulator calibration when: in-app simulator OR Python serial simulator (uncalibrated) */}
+        {(() => {
+          const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
+          const SIMULATOR_MAXBENDS = [2200, 1300, 1480, 1640, 1720];
+          const useSimulatorCal = isSimulating || (
+            connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1)
+          );
+          const calBaselines = useSimulatorCal ? SIMULATOR_BASELINES : baselines;
+          const calMaxbends = useSimulatorCal ? SIMULATOR_MAXBENDS : maxbends;
+          return (
         <div style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
           gap: '1rem',
           marginBottom: '1rem'
         }}>
-          {/* 3D Hand Visualization */}
           <HandVisualization3D
             currentSample={currentSample}
             isActive={isSimulating || connectedDevice !== null}
             prediction={currentPrediction?.letter}
             confidence={currentPrediction?.confidence}
             onTestSample={(sample) => setCurrentSample(sample)}
-            baselines={baselines}
-            maxbends={maxbends}
+            baselines={calBaselines}
+            maxbends={calMaxbends}
           />
 
-          {/* Real-Time Sensor Display */}
           <SensorDisplay 
             currentSample={currentSample}
             isActive={isSimulating || connectedDevice !== null}
             sampleCount={sensorBuffer.length}
-            targetSamples={recognitionMode === 'continuous' ? 150 : 200}
+            targetSamples={recognitionMode === 'manual' ? 200 : 50}
             isCollecting={isCollectingRef.current}
-            baselines={baselines}
-            maxbends={maxbends}
+            baselines={calBaselines}
+            maxbends={calMaxbends}
           />
         </div>
+          );
+        })()}
 
         {/* Manual Prediction Recording */}
         {/* Manual Sign Recording - Only show in Manual mode */}
@@ -819,7 +881,7 @@ function App() {
               marginBottom: '0.5rem'
             }}>
               {recognitionMode === 'single' 
-                ? 'Predictions 5x per second with rolling 200-sample window. Hold your hand steady!'
+                ? 'Predictions 5x per second with rolling 50-sample window. Hold each letter ~1 sec!'
                 : 'Building words in real-time. New predictions 5x per second as you sign.'}
             </p>
             <div style={{
@@ -831,8 +893,8 @@ function App() {
               gap: '1rem',
               flexWrap: 'wrap'
             }}>
-              <span>Buffer: {sensorBuffer.length}/200 samples</span>
-              {sensorBuffer.length >= 200 && (
+              <span>Buffer: {sensorBuffer.length}/50 samples</span>
+              {sensorBuffer.length >= 50 && (
                 <span style={{ color: 'var(--accent-color)' }}>✓ Ready for predictions</span>
               )}
             </div>

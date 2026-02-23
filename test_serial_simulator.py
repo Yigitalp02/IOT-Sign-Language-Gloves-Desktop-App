@@ -11,47 +11,51 @@ Usage:
     1. Make sure VSPE has COM3 <-> COM4 pair created
     2. Run this script (it will connect to COM3)
     3. Desktop app should connect to COM4
-    4. Watch the real-time hand movements!
+    4. Type a letter (A, B, C, ...) + Enter to switch. Keeps current letter until you change.
 """
 
 import serial
 import time
 import random
 import math
+import threading
 
 # Serial port configuration
 PORT = 'COM3'  # Change to COM4 if needed
 BAUD_RATE = 115200
 SAMPLE_RATE = 0.02  # 50Hz (20ms between samples)
 
-# Sensor calibration (from SimulatorControl.tsx)
-BASELINES = [440, 612, 618, 548, 528]  # thumb, index, middle, ring, pinky (straight)
-MAXBENDS = [650, 900, 900, 850, 800]   # fully bent
+# Sensor calibration - MUST match SimulatorControl.tsx (thermistor glove)
+# Thermistor: straight = higher, bent = lower (opposite of flex sensors)
+# Updated for normalized model compatibility
+BASELINES = [2700, 1650, 1850, 2110, 2125]  # straight (higher values)
+MAXBENDS = [2200, 1300, 1480, 1640, 1720]   # fully bent (lower values)
 
 def denormalize(normalized_values, baselines, maxbends):
-    """Convert normalized values (0-1) to raw sensor values"""
+    """Convert normalized 0-1 to raw sensor values (thermistor range)"""
     return [
         int(baselines[i] + normalized_values[i] * (maxbends[i] - baselines[i]))
         for i in range(5)
     ]
 
-# ASL letter patterns (normalized 0-1, matching SimulatorControl.tsx exactly)
+# ASL letter patterns (normalized 0-1) - ASL-correct shapes for display
+# B: index must be straight (0.05) like middle/ring/pinky
 ASL_PATTERNS_NORMALIZED = {
-    'A': [0.02, 0.68, 0.78, 0.65, 0.68],
-    'B': [0.42, 0.13, 0.24, 0.26, 0.32],
-    'C': [0.31, 0.56, 0.70, 0.59, 0.59],
-    'D': [0.40, 0.04, 0.74, 0.64, 0.66],
-    'E': [0.53, 0.61, 0.81, 0.64, 0.64],
-    'F': [0.44, 0.43, 0.13, 0.22, 0.33],
-    'I': [0.47, 0.68, 0.74, 0.66, 0.22],
-    'K': [0.13, 0.00, 0.35, 0.65, 0.68],
-    'O': [0.50, 0.50, 0.58, 0.58, 0.54],
-    'S': [0.55, 0.67, 0.74, 0.68, 0.69],
-    'T': [0.33, 0.20, 0.67, 0.63, 0.68],
-    'V': [0.26, 0.03, 0.02, 0.95, 0.95],
-    'W': [0.23, 0.12, 0.11, 0.22, 0.73],
-    'X': [0.38, 0.47, 0.71, 0.65, 0.71],
-    'Y': [0.00, 0.58, 0.71, 0.65, 0.24],
+    'A': [0.00, 1.00, 0.90, 1.00, 1.00],
+    'B': [0.74, 0.05, 0.06, 0.10, 0.13],
+    'C': [0.00, 1.00, 0.85, 0.98, 0.86],
+    'D': [0.09, 0.05, 0.85, 1.00, 0.79],   # index straight, others bent
+    'E': [0.88, 1.00, 0.97, 1.00, 0.97],
+    'F': [0.04, 0.52, 0.11, 0.26, 0.28],
+    'I': [0.83, 0.99, 0.85, 0.98, 0.20],
+    'K': [0.04, 0.53, 0.21, 0.87, 0.50],
+    'O': [0.02, 0.91, 0.81, 0.98, 0.78],
+    'S': [0.57, 0.92, 0.87, 1.00, 0.96],
+    'T': [0.07, 0.88, 0.88, 1.00, 1.00],
+    'V': [0.55, 0.31, 0.19, 0.94, 0.81],
+    'W': [0.72, 0.09, 0.03, 0.15, 0.90],
+    'X': [0.48, 0.33, 0.77, 0.92, 0.91],
+    'Y': [0.01, 0.98, 0.91, 0.95, 0.03],
 }
 
 # Convert to raw sensor values
@@ -61,9 +65,9 @@ ASL_PATTERNS = {
 }
 
 def add_noise(values, noise_level=8):
-    """Add realistic sensor noise to values"""
+    """Add realistic sensor noise to values (thermistor range ~1300-2700)"""
     return [
-        max(0, min(1023, int(v + random.uniform(-noise_level, noise_level))))
+        max(1000, min(3000, int(v + random.uniform(-noise_level, noise_level))))
         for v in values
     ]
 
@@ -89,48 +93,56 @@ def main():
         ser = serial.Serial(PORT, BAUD_RATE, timeout=1)
         print(f"✓ Connected to {PORT}")
         print("Sending continuous sensor data...")
-        print("Press Ctrl+C to stop\n")
+        print("\nControls: Type a letter (A,B,C,D,E,F,I,K,O,S,T,V,W,X,Y) + Enter to switch.")
+        print("          Keeps current letter until you change. Ctrl+C to stop.\n")
         
-        # Letter sequence to cycle through
-        letters = ['A', 'B', 'C', 'D', 'E', 'V', 'W', 'Y', 'I']
-        current_letter_idx = 0
+        # Shared: current letter (user controls via keyboard)
+        current_letter = ['A']  # use list so closure can mutate
+        valid_letters = sorted(ASL_PATTERNS.keys())
         
-        # Hold each letter for a bit, then smoothly transition
-        samples_per_letter = 250  # ~4 seconds at 50Hz
-        transition_steps = 25     # ~0.5 seconds transition
+        def input_thread():
+            while True:
+                try:
+                    inp = input("Letter> ").strip().upper()
+                    if not inp:
+                        continue
+                    letter = inp[0]
+                    if letter in ASL_PATTERNS:
+                        current_letter[0] = letter
+                        print(f"  → Switched to {letter}")
+                    else:
+                        print(f"  Valid: {', '.join(valid_letters)}")
+                except EOFError:
+                    break
+                except Exception:
+                    break
+        
+        t = threading.Thread(target=input_thread, daemon=True)
+        t.start()
         
         sample_count = 0
+        prev_letter = current_letter[0]
         
         while True:
-            current_letter = letters[current_letter_idx]
-            next_letter = letters[(current_letter_idx + 1) % len(letters)]
+            letter = current_letter[0]
+            pattern = ASL_PATTERNS[letter]
             
-            current_pattern = ASL_PATTERNS[current_letter]
-            next_pattern = ASL_PATTERNS[next_letter]
+            # Smooth transition when letter changed
+            if letter != prev_letter:
+                prev_pattern = ASL_PATTERNS[prev_letter]
+                for interpolated in smooth_transition(prev_pattern, pattern, steps=25):
+                    values = add_noise(interpolated)
+                    ser.write((','.join(map(str, values)) + '\n').encode('utf-8'))
+                    sample_count += 1
+                    time.sleep(SAMPLE_RATE)
+                prev_letter = letter
             
-            # Hold current letter
-            for _ in range(samples_per_letter - transition_steps):
-                values = add_noise(current_pattern)
-                line = ','.join(map(str, values)) + '\n'
-                ser.write(line.encode('utf-8'))
-                
-                sample_count += 1
-                if sample_count % 50 == 0:  # Print every second
-                    print(f"[{sample_count:5d}] Sending {current_letter}: {','.join(map(str, values))}")
-                
-                time.sleep(SAMPLE_RATE)
-            
-            # Smooth transition to next letter
-            print(f"        → Transitioning from {current_letter} to {next_letter}...")
-            for interpolated in smooth_transition(current_pattern, next_pattern, transition_steps):
-                values = add_noise(interpolated)
-                line = ','.join(map(str, values)) + '\n'
-                ser.write(line.encode('utf-8'))
-                
+            # Send current letter continuously (keep holding)
+            for _ in range(50):  # 1 second bursts, allows responsive letter change
+                values = add_noise(pattern)
+                ser.write((','.join(map(str, values)) + '\n').encode('utf-8'))
                 sample_count += 1
                 time.sleep(SAMPLE_RATE)
-            
-            current_letter_idx = (current_letter_idx + 1) % len(letters)
     
     except serial.SerialException as e:
         print(f"✗ Serial port error: {e}")

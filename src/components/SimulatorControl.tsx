@@ -25,22 +25,24 @@ function denormalize(normalized: number[], baselines: number[], maxbends: number
   return normalized.map((val, i) => Math.round(baselines[i] + val * (maxbends[i] - baselines[i])));
 }
 
+// Patterns: ASL-correct finger positions (0=straight, 1=bent) for accurate 3D display
+// B: thumb tucked, index/middle/ring/pinky all straight
 const ASL_PATTERNS: Record<string, number[]> = {
-  A: denormalize([0.02, 0.68, 0.78, 0.65, 0.68], BASELINES, MAXBENDS),
-  B: denormalize([0.42, 0.13, 0.24, 0.26, 0.32], BASELINES, MAXBENDS),
-  C: denormalize([0.31, 0.56, 0.70, 0.59, 0.59], BASELINES, MAXBENDS),
-  D: denormalize([0.40, 0.04, 0.74, 0.64, 0.66], BASELINES, MAXBENDS),
-  E: denormalize([0.53, 0.61, 0.81, 0.64, 0.64], BASELINES, MAXBENDS),
-  F: denormalize([0.44, 0.43, 0.13, 0.22, 0.33], BASELINES, MAXBENDS),
-  I: denormalize([0.47, 0.68, 0.74, 0.66, 0.22], BASELINES, MAXBENDS),
-  K: denormalize([0.13, 0.00, 0.35, 0.65, 0.68], BASELINES, MAXBENDS),
-  O: denormalize([0.50, 0.50, 0.58, 0.58, 0.54], BASELINES, MAXBENDS),
-  S: denormalize([0.55, 0.67, 0.74, 0.68, 0.69], BASELINES, MAXBENDS),
-  T: denormalize([0.33, 0.20, 0.67, 0.63, 0.68], BASELINES, MAXBENDS),
-  V: denormalize([0.26, 0.03, 0.02, 0.95, 0.95], BASELINES, MAXBENDS), // Ring and pinky fully bent
-  W: denormalize([0.23, 0.12, 0.11, 0.22, 0.73], BASELINES, MAXBENDS),
-  X: denormalize([0.38, 0.47, 0.71, 0.65, 0.71], BASELINES, MAXBENDS),
-  Y: denormalize([0.00, 0.58, 0.71, 0.65, 0.24], BASELINES, MAXBENDS),
+  A: denormalize([0.00, 1.00, 0.90, 1.00, 1.00], BASELINES, MAXBENDS),
+  B: denormalize([0.74, 0.05, 0.06, 0.10, 0.13], BASELINES, MAXBENDS),
+  C: denormalize([0.00, 1.00, 0.85, 0.98, 0.86], BASELINES, MAXBENDS),
+  D: denormalize([0.09, 0.05, 0.85, 1.00, 0.79], BASELINES, MAXBENDS),  // index straight, others bent
+  E: denormalize([0.88, 1.00, 0.97, 1.00, 0.97], BASELINES, MAXBENDS),
+  F: denormalize([0.04, 0.52, 0.11, 0.26, 0.28], BASELINES, MAXBENDS),
+  I: denormalize([0.83, 0.99, 0.85, 0.98, 0.20], BASELINES, MAXBENDS),
+  K: denormalize([0.04, 0.53, 0.21, 0.87, 0.50], BASELINES, MAXBENDS),
+  O: denormalize([0.02, 0.91, 0.81, 0.98, 0.78], BASELINES, MAXBENDS),
+  S: denormalize([0.57, 0.92, 0.87, 1.00, 0.96], BASELINES, MAXBENDS),
+  T: denormalize([0.07, 0.88, 0.88, 1.00, 1.00], BASELINES, MAXBENDS),
+  V: denormalize([0.55, 0.31, 0.19, 0.94, 0.81], BASELINES, MAXBENDS),
+  W: denormalize([0.72, 0.09, 0.03, 0.15, 0.90], BASELINES, MAXBENDS),
+  X: denormalize([0.48, 0.33, 0.77, 0.92, 0.91], BASELINES, MAXBENDS),
+  Y: denormalize([0.01, 0.98, 0.91, 0.95, 0.03], BASELINES, MAXBENDS),
 };
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'I', 'K', 'O', 'S', 'T', 'V', 'W', 'X', 'Y'];

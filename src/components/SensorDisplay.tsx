@@ -86,7 +86,9 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
               color: isCollecting ? '#10b981' : '#64748b',
               marginRight: '0.5rem'
             }}>
-              {isCollecting ? '📊 Collecting' : '⏸ Idle'}
+              {targetSamples <= 50
+                ? (sampleCount >= 50 ? '🔴 Live (rolling window)' : '⏳ Filling window...')
+                : (isCollecting ? '📊 Collecting' : '⏸ Idle')}
             </span>
             {motionDetected && (
               <span style={{
@@ -106,7 +108,9 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
             fontWeight: 600,
             color: isCollecting ? '#10b981' : '#64748b'
           }}>
-            {sampleCount}/{targetSamples} samples
+            {targetSamples <= 50
+              ? `Window: ${sampleCount}/${targetSamples}`  // Rolling window, not collecting
+              : `${sampleCount}/${targetSamples} samples`}
           </div>
         </div>
       )}
@@ -140,20 +144,20 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
         </div>
       )}
 
-      {/* Legend */}
+      {/* Legend - colors reflect normalized bend (0-33% straight, 33-66% partial, 66-100% bent) */}
       {currentSample && currentSample.length > 0 && (
         <div className="legend">
           <div className="legend-item">
             <div className="legend-dot red" />
-            <span className="legend-text">800-1500 (Bent)</span>
+            <span className="legend-text">Bent</span>
           </div>
           <div className="legend-item">
             <div className="legend-dot yellow" />
-            <span className="legend-text">1501-2000 (Partial)</span>
+            <span className="legend-text">Partial</span>
           </div>
           <div className="legend-item">
             <div className="legend-dot green" />
-            <span className="legend-text">2001-2700 (Straight)</span>
+            <span className="legend-text">Straight</span>
           </div>
         </div>
       )}

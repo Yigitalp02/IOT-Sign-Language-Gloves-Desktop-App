@@ -36,9 +36,12 @@ export interface HealthResponse {
   authentication_enabled?: boolean;
 }
 
+const LOCAL_MODEL_URL = 'http://localhost:8765';
+
 class ApiService {
   private apiKey: string;
   private baseUrl: string;
+  private useLocalModel: boolean = false;
 
   constructor() {
     this.apiKey = API_KEY;
@@ -49,9 +52,24 @@ class ApiService {
     }
   }
 
+  /** Toggle dev mode: use local model instead of cloud API */
+  setUseLocalModel(use: boolean): void {
+    this.useLocalModel = use;
+    console.log(`[apiService] Use local model: ${use}`);
+  }
+
+  getUseLocalModel(): boolean {
+    return this.useLocalModel;
+  }
+
+  private getEffectiveBaseUrl(): string {
+    return this.useLocalModel ? LOCAL_MODEL_URL : this.baseUrl;
+  }
+
   async predict(sensorData: SensorData): Promise<PredictionResponse> {
     try {
-      console.log(`Sending ${sensorData.flex_sensors.length} samples to API`);
+      const url = this.getEffectiveBaseUrl();
+      console.log(`Sending ${sensorData.flex_sensors.length} samples to ${this.useLocalModel ? 'LOCAL' : 'API'}`);
       console.log('First sample:', JSON.stringify(sensorData.flex_sensors[0]));
       console.log('Last sample:', JSON.stringify(sensorData.flex_sensors[sensorData.flex_sensors.length - 1]));
       console.log('Device ID:', sensorData.device_id);
@@ -61,27 +79,31 @@ class ApiService {
       const avgCh1 = sensorData.flex_sensors.reduce((sum, s) => sum + s[1], 0) / sensorData.flex_sensors.length;
       console.log('Avg CH0:', Math.round(avgCh0), 'Avg CH1:', Math.round(avgCh1));
       
-      const response = await fetch(`${this.baseUrl}/predict`, {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (!this.useLocalModel) {
+        headers['X-API-Key'] = this.apiKey;
+      }
+
+      const response = await fetch(`${url}/predict`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': this.apiKey,
-        },
+        headers,
         body: JSON.stringify(sensorData),
       });
 
       if (!response.ok) {
-        // Handle specific error codes
-        if (response.status === 401) {
-          throw new Error('Missing API Key. Configure VITE_API_KEY in .env');
+        if (!this.useLocalModel) {
+          if (response.status === 401) {
+            throw new Error('Missing API Key. Configure VITE_API_KEY in .env');
+          }
+          if (response.status === 403) {
+            throw new Error('Invalid API Key. Check your .env configuration');
+          }
+          if (response.status === 429) {
+            throw new Error('Rate limit exceeded. Please wait a moment');
+          }
         }
-        if (response.status === 403) {
-          throw new Error('Invalid API Key. Check your .env configuration');
-        }
-        if (response.status === 429) {
-          throw new Error('Rate limit exceeded. Please wait a moment');
-        }
-        
         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
         throw new Error(errorData.detail || `API error: ${response.status}`);
       }
@@ -93,13 +115,16 @@ class ApiService {
       return result;
     } catch (error) {
       console.error('API prediction error:', error);
+      if (this.useLocalModel && error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Failed to fetch'))) {
+        throw new Error('Local model server not running. Run: cd iot-sign-glove && python scripts/serve_local_model.py');
+      }
       throw error;
     }
   }
 
   async checkHealth(): Promise<HealthResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/health`, {
+      const response = await fetch(`${this.getEffectiveBaseUrl()}/health`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -125,10 +150,10 @@ class ApiService {
   }
 
   /**
-   * Get current API base URL
+   * Get current API base URL (or local URL when dev mode)
    */
   getBaseUrl(): string {
-    return this.baseUrl;
+    return this.getEffectiveBaseUrl();
   }
 }
 
