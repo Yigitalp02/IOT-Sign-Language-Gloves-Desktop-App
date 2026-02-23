@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
@@ -16,6 +16,12 @@ export default function ConnectionManager({ onSensorData, onConnectionChange }: 
     const [isReading, setIsReading] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
     const [error, setError] = useState<string>("");
+    
+    // Use ref to avoid re-registering event listener on every render
+    const onSensorDataRef = useRef(onSensorData);
+    useEffect(() => {
+        onSensorDataRef.current = onSensorData;
+    }, [onSensorData]);
 
     const scanPorts = async () => {
         setIsScanning(true);
@@ -37,17 +43,17 @@ export default function ConnectionManager({ onSensorData, onConnectionChange }: 
     useEffect(() => {
         scanPorts();
         
-        // Listen for serial data events
+        // Listen for serial data events - use ref to avoid re-registering
         const unlisten = listen<number[]>("serial-data", (event) => {
-            if (onSensorData) {
-                onSensorData(event.payload);
+            if (onSensorDataRef.current) {
+                onSensorDataRef.current(event.payload);
             }
         });
         
         return () => {
             unlisten.then(f => f());
         };
-    }, [onSensorData]);
+    }, []); // Empty deps - only register once
 
     const handleConnect = async () => {
         if (!selectedPort) return;

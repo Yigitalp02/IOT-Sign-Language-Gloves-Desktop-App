@@ -14,10 +14,12 @@ interface SimulatorControlProps {
 }
 
 // ASL patterns for 15 distinguishable letters (calibrated for our sensor range)
-// Converted from normalized values (0-1) to raw ADC values using baselines and maxbends
-// Source: iot-sign-glove/scripts/synthetic_asl_simulator.py
-const BASELINES = [440, 612, 618, 548, 528]; // thumb, index, middle, ring, pinky
-const MAXBENDS = [650, 900, 900, 850, 800];
+// UPDATED FOR ESP32 THERMISTOR SENSORS - PROPERLY WORN GLOVE
+// Based on actual sensor data from properly worn glove (Feb 19, 2026)
+// Index finger has wide range: 1650 (straight) to 1300 (fully bent)
+// Thumb goes very low when bent: 2700 (straight) to 2200 (fully bent)
+const BASELINES = [2700, 1650, 1850, 2110, 2125]; // thumb, index, middle, ring, pinky (straight)
+const MAXBENDS = [2200, 1300, 1480, 1640, 1720]; // fully bent
 
 function denormalize(normalized: number[], baselines: number[], maxbends: number[]): number[] {
   return normalized.map((val, i) => Math.round(baselines[i] + val * (maxbends[i] - baselines[i])));

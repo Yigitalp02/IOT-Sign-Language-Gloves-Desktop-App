@@ -8,26 +8,55 @@ interface SensorDisplayProps {
   targetSamples?: number;
   isCollecting?: boolean;
   motionDetected?: boolean;
+  baselines?: number[];
+  maxbends?: number[];
 }
 
 const SensorDisplay: React.FC<SensorDisplayProps> = ({ 
   currentSample, 
   isActive, 
   sampleCount = 0, 
-  targetSamples = 150, 
+  targetSamples = 150,
   isCollecting = false,
-  motionDetected = false
+  motionDetected = false,
+  baselines,
+  maxbends
 }) => {
   const { theme } = useTheme();
 
-  const getBarWidth = (value: number, min: number = 0, max: number = 1023) => {
-    return `${((value - min) / (max - min)) * 100}%`;
+  // Calculate color based on calibration (if provided) or use per-finger defaults
+  const getBarColor = (value: number, fingerIndex: number) => {
+    if (baselines && maxbends && baselines[fingerIndex] && maxbends[fingerIndex]) {
+      const baseline = baselines[fingerIndex];
+      const maxbend = maxbends[fingerIndex];
+      
+      // Normalize value: 0 = straight (baseline), 1 = fully bent (maxbend)
+      // For thermistors: baseline > maxbend (higher = straight, lower = bent)
+      const normalized = (value - baseline) / (maxbend - baseline);
+      
+      // Color thresholds based on bend percentage
+      if (normalized < 0.33) return '#10b981'; // Green - mostly straight
+      if (normalized < 0.66) return '#fbbf24'; // Yellow - partially bent
+      return '#ef4444'; // Red - mostly/fully bent
+    }
+    
+    // Fallback to fixed thresholds if no calibration
+    if (value > 2000) return '#10b981'; // Green - straight
+    if (value > 1500) return '#fbbf24'; // Yellow - partially bent
+    return '#ef4444'; // Red - fully bent
   };
 
-  const getBarColor = (value: number) => {
-    if (value < 341) return '#ef4444'; // Red - low flex
-    if (value < 682) return '#fbbf24'; // Yellow - medium flex
-    return '#10b981'; // Green - high flex
+  const getBarWidth = (value: number, fingerIndex: number) => {
+    if (baselines && maxbends && baselines[fingerIndex] && maxbends[fingerIndex]) {
+      const baseline = baselines[fingerIndex];
+      const maxbend = maxbends[fingerIndex];
+      const min = Math.min(baseline, maxbend);
+      const max = Math.max(baseline, maxbend);
+      return `${((value - min) / (max - min)) * 100}%`;
+    }
+    
+    // Fallback to fixed range
+    return `${((value - 800) / (2700 - 800)) * 100}%`;
   };
 
   const fingerNames = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
@@ -98,8 +127,8 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
                 <div
                   className="bar-fill"
                   style={{
-                    width: getBarWidth(value),
-                    backgroundColor: getBarColor(value),
+                    width: getBarWidth(value, index),
+                    backgroundColor: getBarColor(value, index),
                   }}
                 />
               </div>
@@ -116,15 +145,15 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
         <div className="legend">
           <div className="legend-item">
             <div className="legend-dot red" />
-            <span className="legend-text">0-340</span>
+            <span className="legend-text">800-1500 (Bent)</span>
           </div>
           <div className="legend-item">
             <div className="legend-dot yellow" />
-            <span className="legend-text">341-681</span>
+            <span className="legend-text">1501-2000 (Partial)</span>
           </div>
           <div className="legend-item">
             <div className="legend-dot green" />
-            <span className="legend-text">682-1023</span>
+            <span className="legend-text">2001-2700 (Straight)</span>
           </div>
         </div>
       )}

@@ -2,15 +2,23 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "./context/ThemeContext";
 import ConnectionManager from "./components/ConnectionManager";
-import SimulatorControl from "./components/SimulatorControl";
+import Calibrator from "./components/Calibrator";
 import PredictionView from "./components/PredictionView";
-import QuickDemo from "./components/QuickDemo";
 import SensorDisplay from "./components/SensorDisplay";
 import HandVisualization3D from "./components/HandVisualization3D";
 import DebugLog from "./components/DebugLog";
 import DataRecorder from "./components/DataRecorder";
 import apiService, { PredictionResponse } from "./services/apiService";
 import "./App.css";
+
+// Default sensor calibration values for thermistors (physical glove)
+// Based on actual sensor readings from the glove
+const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348]; // straight position (higher values)
+const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position (lower values)
+
+// Flex sensor ranges used by the ML model (from test_serial_simulator.py)
+const MODEL_BASELINES = [440, 612, 618, 548, 528];  // straight (lower values for flex sensors)
+const MODEL_MAXBENDS = [650, 900, 900, 850, 800];   // bent (higher values for flex sensors)
 
 interface PredictionRecord {
   letter: string;
@@ -45,6 +53,10 @@ function App() {
   // Real-time sensor display
   const [currentSample, setCurrentSample] = useState<number[] | null>(null);
   
+  // Data log for debugging (stores last 100 samples)
+  const [dataLog, setDataLog] = useState<string[]>([]);
+  const dataLogRef = useRef<string[]>([]);
+  
   // Debug state
   const [debugLogData, setDebugLogData] = useState<DebugLogData | null>(null);
   
@@ -54,26 +66,47 @@ function App() {
   // Connection state (for future glove support)
   const [connectedDevice, setConnectedDevice] = useState<string | null>(null);
 
-  // Motion detection for automatic buffer clearing (declared after connectedDevice)
-  const previousSampleRef = useRef<number[] | null>(null);
-  const perFingerMotionThreshold = 15; // Temporarily low for smooth Python simulator testing (will be 100 for real glove)
-  const [motionDetected, setMotionDetected] = useState(false);
+  // Calibration state
+  const [baselines, setBaselines] = useState<number[]>(DEFAULT_BASELINES);
+  const [maxbends, setMaxbends] = useState<number[]>(DEFAULT_MAXBENDS);
+
+  // Manual prediction recording
+  const [isRecordingPrediction, setIsRecordingPrediction] = useState(false);
+  const isRecordingPredictionRef = useRef(false);
+  const [predictionProgress, setPredictionProgress] = useState(0);
 
   // Continuous mode state
   const [detectedLetters, setDetectedLetters] = useState<string[]>([]);
   const detectedLettersRef = useRef<string[]>([]);
-  const [isContinuousMode, setIsContinuousMode] = useState(false);
+  const [recognitionMode, setRecognitionMode] = useState<'manual' | 'single' | 'continuous'>('manual');
   const [minConfidence, setMinConfidence] = useState(0.6);
   const [isWordFinalized, setIsWordFinalized] = useState(false);
+
+  // Real-time prediction state (for continuous streaming)
+  const isRealTimePredicting = useRef(false);
+  const realTimeBufferRef = useRef<number[][]>([]);
+  const lastPredictedLetterRef = useRef<string>('');
+  const lastPredictionTimeRef = useRef<number>(0);
+  const MIN_PREDICTION_INTERVAL = 700; // Minimum 2 seconds between predictions to avoid rate limits
 
   // Keep ref in sync with state
   useEffect(() => {
     detectedLettersRef.current = detectedLetters;
   }, [detectedLetters]);
-
-  // QuickDemo control
-  const quickDemoCallbackRef = useRef<(() => void) | null>(null);
-  const simulateLetterRef = useRef<string | null>(null);
+  
+  // Calibration handler
+  const handleCalibrationComplete = useCallback((newBaselines: number[], newMaxbends: number[]) => {
+    console.log('[App] Calibration complete!');
+    console.log('[App] Baselines:', newBaselines);
+    console.log('[App] Maxbends:', newMaxbends);
+    
+    // Update state for normalization
+    setBaselines(newBaselines);
+    setMaxbends(newMaxbends);
+    
+    // Don't use alert() - it's blocked by Tauri
+    console.log(`Calibration Applied! Baselines: [${newBaselines.join(', ')}] Maxbends: [${newMaxbends.join(', ')}]`);
+  }, []);
 
   // Idle detection
   const lastSampleTimeRef = useRef<number>(Date.now());
@@ -85,19 +118,6 @@ function App() {
   const [recordedSamples, setRecordedSamples] = useState<number[][]>([]);
   const recordingDataRef = useRef<{ letter: string; samples: number[][] }[]>([]);
 
-  // Handler to programmatically trigger letter simulation
-  const simulateLetter = useCallback((letter: string) => {
-    if (!isContinuousMode) {
-      setIsContinuousMode(true);
-    }
-    
-    setIsSimulating(true);
-    setSensorBuffer([]);
-    isCollectingRef.current = true;
-    simulationStartTimeRef.current = Date.now();
-    simulateLetterRef.current = letter;
-  }, [isContinuousMode, connectedDevice, isSimulating]);
-
   // Reset collecting flag when starting simulation
   useEffect(() => {
     if (isSimulating) {
@@ -108,13 +128,9 @@ function App() {
 
   // Auto-restart collection in continuous mode
   useEffect(() => {
-    if (quickDemoCallbackRef.current) {
-      return;
-    }
-    
-    if (isContinuousMode && !isCollectingRef.current && !isAnalyzing && isSimulating) {
+    if (recognitionMode === 'continuous' && !isCollectingRef.current && !isAnalyzing && isSimulating) {
       const timer = setTimeout(() => {
-        if (isSimulating && !quickDemoCallbackRef.current) {
+        if (isSimulating) {
           console.log('[Continuous mode] Restarting collection for next letter');
           isCollectingRef.current = true;
           setSensorBuffer([]);
@@ -125,11 +141,11 @@ function App() {
       
       return () => clearTimeout(timer);
     }
-  }, [isContinuousMode, isAnalyzing, isSimulating]);
+  }, [recognitionMode, isAnalyzing, isSimulating]);
 
   // Idle detection for word finalization
   useEffect(() => {
-    const isActiveInContinuousMode = isContinuousMode && (isSimulating || connectedDevice !== null);
+    const isActiveInContinuousMode = recognitionMode === 'continuous' && (isSimulating || connectedDevice !== null);
     
     if (isActiveInContinuousMode && detectedLetters.length > 0 && !isWordFinalized) {
       if (idleTimerRef.current) {
@@ -138,7 +154,7 @@ function App() {
 
       idleTimerRef.current = setTimeout(() => {
         const timeSinceLastSample = Date.now() - lastSampleTimeRef.current;
-        if (timeSinceLastSample >= 2000 && !quickDemoCallbackRef.current && !isWordFinalized) {
+        if (timeSinceLastSample >= 2000 && !isWordFinalized) {
           console.log('[Continuous mode] No samples for 2s - finalizing word and speaking');
           
           const finalWord = detectedLettersRef.current.join('');
@@ -162,16 +178,45 @@ function App() {
         clearTimeout(idleTimerRef.current);
       }
     };
-  }, [isContinuousMode, isSimulating, connectedDevice, detectedLetters, isWordFinalized]);
+  }, [recognitionMode, isSimulating, connectedDevice, detectedLetters, isWordFinalized]);
 
   const makePrediction = useCallback(async (samples: number[][]) => {
     const simulationEndTime = Date.now();
     const apiCallTime = Date.now();
     
     console.log(`[App] ===== makePrediction called with ${samples.length} samples =====`);
-    console.log('[App] isContinuousMode:', isContinuousMode);
+    console.log('[App] recognitionMode:', recognitionMode);
     setIsAnalyzing(true);
     setPredictionError(null);
+
+    // Convert thermistor readings to flex sensor format for ML model
+    // Step 1: Normalize thermistor values (0 = straight, 1 = bent)
+    // Step 2: Denormalize to flex sensor ranges the model expects
+    const convertedSamples = samples.map(sample => 
+      sample.map((value, fingerIndex) => {
+        const thermBaseline = baselines[fingerIndex];  // Higher value (straight)
+        const thermMaxBend = maxbends[fingerIndex];    // Lower value (bent)
+        
+        // Normalize thermistor reading (0 = straight, 1 = bent)
+        // For thermistors: baseline > maxBend, so we invert
+        const normalized = (thermBaseline - value) / (thermBaseline - thermMaxBend);
+        const clampedNormalized = Math.max(0, Math.min(1, normalized));
+        
+        // Denormalize to flex sensor range (model expects flex sensor values)
+        // For flex sensors: baseline < maxBend
+        const flexBaseline = MODEL_BASELINES[fingerIndex];
+        const flexMaxBend = MODEL_MAXBENDS[fingerIndex];
+        const flexValue = flexBaseline + clampedNormalized * (flexMaxBend - flexBaseline);
+        
+        return Math.round(flexValue);
+      })
+    );
+
+    console.log('[App] Converting thermistor → flex sensor format for ML model');
+    console.log('[App] Raw thermistor (first):', samples[0]);
+    console.log('[App] Converted to flex sensor:', convertedSamples[0]);
+    console.log('[App] Raw thermistor (last):', samples[samples.length - 1]);
+    console.log('[App] Converted to flex sensor:', convertedSamples[convertedSamples.length - 1]);
 
     // Prepare debug data
     const debugData: DebugLogData = {
@@ -185,7 +230,7 @@ function App() {
 
     try {
       const response = await apiService.predict({
-        flex_sensors: samples,
+        flex_sensors: convertedSamples, // Send converted flex sensor values
         device_id: isSimulating ? 'desktop-simulator' : 'desktop-glove'
       });
 
@@ -195,53 +240,65 @@ function App() {
 
       setCurrentPrediction(response);
 
-      // In continuous mode, add letter to word
-      if (isContinuousMode) {
-        const isQuickDemoRunning = quickDemoCallbackRef.current !== null;
+      // In continuous mode, add letter to word (with duplicate prevention for real-time)
+      if (recognitionMode === 'continuous') {
+        const currentTime = Date.now();
+        const timeSinceLastPrediction = currentTime - lastPredictionTimeRef.current;
+        
+        // Only add if it's a different letter OR enough time has passed (500ms)
+        const isDifferentLetter = response.letter !== lastPredictedLetterRef.current;
+        const enoughTimePassed = timeSinceLastPrediction > 500;
         
         if (isWordFinalized) {
           console.log('[App] Word was finalized, clearing and starting new word');
           setDetectedLetters([response.letter]);
           setIsWordFinalized(false);
-        } else if (isQuickDemoRunning || response.confidence >= minConfidence) {
-          setDetectedLetters(prev => {
-            const newLetters = [...prev, response.letter];
-            console.log(`[App] Added letter "${response.letter}" to word. Current word: "${newLetters.join('')}"`);
-            return newLetters;
-          });
+          lastPredictedLetterRef.current = response.letter;
+          lastPredictionTimeRef.current = currentTime;
+        } else if (response.confidence >= minConfidence && (isDifferentLetter || enoughTimePassed)) {
+          // In real-time mode, only add if it's a new letter or enough time passed
+          if (isDifferentLetter || enoughTimePassed) {
+            setDetectedLetters(prev => {
+              const newLetters = [...prev, response.letter];
+              console.log(`[App] Added letter "${response.letter}" to word. Current word: "${newLetters.join('')}"`);
+              return newLetters;
+            });
+            lastPredictedLetterRef.current = response.letter;
+            lastPredictionTimeRef.current = currentTime;
+          } else {
+            console.log(`[App] Skipping duplicate letter "${response.letter}"`);
+          }
         }
       } else {
-        // Single letter mode - speak the letter
-        console.log('[App] Single letter mode - speaking letter:', response.letter);
-        if ('speechSynthesis' in window) {
-          // Cancel any existing speech first
-          console.log('[App] Cancelling existing speech');
-          window.speechSynthesis.cancel();
-          
-          console.log('[App] Speaking letter:', response.letter);
-          const utterance = new SpeechSynthesisUtterance(response.letter);
-          utterance.lang = 'en-US';
-          utterance.rate = 0.8;
-          utterance.onstart = () => console.log('[App] TTS started for:', response.letter);
-          utterance.onend = () => console.log('[App] TTS ended for:', response.letter);
-          window.speechSynthesis.speak(utterance);
+        // Single letter mode - speak the letter (only once per gesture)
+        const currentTime = Date.now();
+        const timeSinceLastPrediction = currentTime - lastPredictionTimeRef.current;
+        
+        if (timeSinceLastPrediction > 1000) { // Speak only once per second
+          console.log('[App] Single letter mode - speaking letter:', response.letter);
+          if ('speechSynthesis' in window) {
+            // Cancel any existing speech first
+            console.log('[App] Cancelling existing speech');
+            window.speechSynthesis.cancel();
+            
+            console.log('[App] Speaking letter:', response.letter);
+            const utterance = new SpeechSynthesisUtterance(response.letter);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.8;
+            utterance.onstart = () => console.log('[App] TTS started for:', response.letter);
+            utterance.onend = () => console.log('[App] TTS ended for:', response.letter);
+            window.speechSynthesis.speak(utterance);
+            
+            lastPredictionTimeRef.current = currentTime;
+          }
         }
       }
-
-      // Notify QuickDemo that prediction is complete
-      if (quickDemoCallbackRef.current) {
-        console.log('[App] Calling QuickDemo callback');
-        const callback = quickDemoCallbackRef.current;
-        quickDemoCallbackRef.current = null;
-        callback();
-      }
       
-      // In continuous mode with connected device, restart collection immediately
-      if (isContinuousMode && connectedDevice && !quickDemoCallbackRef.current) {
-        console.log('[App] Continuous mode: Restarting collection for next letter');
-        isCollectingRef.current = true;
-        setSensorBuffer([]);
-        simulationStartTimeRef.current = Date.now();
+      // In continuous mode with connected device (real-time mode doesn't need restart)
+      // Real-time predictions happen automatically with rolling window
+      if (recognitionMode === 'continuous' && connectedDevice) {
+        console.log('[App] Continuous real-time mode active');
+        // No need to restart collection - it's continuous!
         lastSampleTimeRef.current = Date.now();
       }
     } catch (error) {
@@ -253,7 +310,7 @@ function App() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [isContinuousMode, minConfidence, isSimulating, isWordFinalized]);
+  }, [recognitionMode, minConfidence, isSimulating, isWordFinalized, baselines, maxbends]);
 
   const makePredictionRef = useRef(makePrediction);
   useEffect(() => {
@@ -266,8 +323,13 @@ function App() {
     
     // Update real-time display
     setCurrentSample(data);
+    
+    // Add to data log (keep last 100 samples)
+    const logLine = data.join(',');
+    dataLogRef.current = [...dataLogRef.current, logLine].slice(-100); // Keep last 100
+    setDataLog(dataLogRef.current);
 
-    // If recording, add sample to recording buffer
+    // If recording for data collection, add sample to recording buffer
     if (isRecording) {
       setRecordedSamples(prev => {
         const newSamples = [...prev, data];
@@ -281,87 +343,110 @@ function App() {
       // Don't process for prediction while recording
       return;
     }
-    
-    // Motion detection: Check if there's significant hand movement
-    // This runs ALWAYS (even when not collecting) to detect transitions
-    // Works for both connected device AND simulator
-    if (previousSampleRef.current && (connectedDevice !== null || isSimulating)) {
-      // Check EACH finger individually - if ANY finger changes > 100, it's a transition
-      const fingerChanges = data.map((value, index) => 
-        Math.abs(value - (previousSampleRef.current![index] || 0))
-      );
-      
-      const maxFingerChange = Math.max(...fingerChanges);
-      const changedFingerIndex = fingerChanges.indexOf(maxFingerChange);
-      const fingerNames = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
-      
-      console.log(`[App] Motion check: max change = ${maxFingerChange.toFixed(0)} (${fingerNames[changedFingerIndex]}), threshold = ${perFingerMotionThreshold}`);
-      
-      if (maxFingerChange > perFingerMotionThreshold) {
-        console.log(`[App] 🔄 Large motion detected on ${fingerNames[changedFingerIndex]} (change: ${maxFingerChange}), clearing buffer to avoid contamination`);
-        console.log(`[App] Previous sample:`, previousSampleRef.current);
-        console.log(`[App] Current sample:`, data);
-        console.log(`[App] Buffer had ${sensorBuffer.length} samples before clearing`);
-        setSensorBuffer([]);
-        simulationStartTimeRef.current = Date.now();
-        setMotionDetected(true);
-        // Clear the motion indicator after 1 second
-        setTimeout(() => setMotionDetected(false), 1000);
+
+    // If recording for prediction (manual mode button), add to sensor buffer
+    if (isRecordingPredictionRef.current) {
+      setSensorBuffer(prev => {
+        const newBuffer = [...prev, data];
+        const targetSamples = 200;
         
-        // If we were collecting, restart collection
-        if (isCollectingRef.current) {
-          console.log(`[App] Restarting collection after motion detection`);
+        // Update progress
+        setPredictionProgress((newBuffer.length / targetSamples) * 100);
+
+        if (newBuffer.length >= targetSamples) {
+          console.log(`[App] Prediction recording complete - ${newBuffer.length} samples collected`);
+          console.log(`[App] isRecordingPredictionRef.current = ${isRecordingPredictionRef.current}`);
+          
+          // Check if we already stopped
+          if (!isRecordingPredictionRef.current) {
+            console.log('[App] Already stopped, skipping duplicate prediction');
+            return prev; // Don't clear buffer or trigger prediction again
+          }
+          
+          // Immediately stop further collection
+          isRecordingPredictionRef.current = false;
+          setIsRecordingPrediction(false);
+          setPredictionProgress(0);
+          
+          // Make prediction
+          setTimeout(() => {
+            makePredictionRef.current(newBuffer);
+          }, 10);
+
+          return [];
         }
-      }
-    }
-    
-    // Store current sample for next comparison
-    previousSampleRef.current = data;
-    
-    // Start collecting if connected to device (not simulating)
-    if (connectedDevice && !isSimulating && !isCollectingRef.current) {
-      isCollectingRef.current = true;
-      simulationStartTimeRef.current = Date.now();
-      setSensorBuffer([]);
-    }
-    
-    if (!isCollectingRef.current) {
+        
+        return newBuffer;
+      });
       return;
     }
 
-    setSensorBuffer(prev => {
-      // Double-check collecting flag inside the state updater to prevent race conditions
-      if (!isCollectingRef.current) {
-        return prev;
-      }
-
-      const newBuffer = [...prev, data];
-      const targetSamples = isContinuousMode ? 150 : 200;
-
-      if (newBuffer.length >= targetSamples) {
-        console.log(`[App] Buffer reached ${newBuffer.length} samples, triggering prediction`);
-        isCollectingRef.current = false; // Immediately stop further collections
+    // REAL-TIME CONTINUOUS STREAMING MODE
+    // Always maintain a rolling window of 200 samples and predict with throttling
+    if (recognitionMode === 'single' || recognitionMode === 'continuous') {
+      // Add to rolling buffer
+      realTimeBufferRef.current = [...realTimeBufferRef.current, data].slice(-200); // Keep last 200 samples
+      
+      // Update UI buffer for display
+      setSensorBuffer(realTimeBufferRef.current);
+      
+      // Check if enough time has passed since last prediction (rate limiting)
+      const now = Date.now();
+      const timeSinceLastPrediction = now - lastPredictionTimeRef.current;
+      const canMakePrediction = timeSinceLastPrediction >= MIN_PREDICTION_INTERVAL;
+      
+      // Only make predictions when we have at least 200 samples, enough time passed, and not already predicting
+      if (realTimeBufferRef.current.length >= 200 && !isRealTimePredicting.current && canMakePrediction) {
+        isRealTimePredicting.current = true;
+        lastPredictionTimeRef.current = now; // Update time immediately to prevent rapid firing
         
-        // In single-letter mode, stop the simulator after collecting samples
-        if (!isContinuousMode) {
-          setIsSimulating(false);
-        }
+        // Make prediction with the rolling window
+        const samplesForPrediction = [...realTimeBufferRef.current];
         
-        setTimeout(() => {
-          makePredictionRef.current(newBuffer);
-        }, 10);
-
-        return [];
+        console.log(`[App] Real-time prediction triggered (${timeSinceLastPrediction}ms since last)`);
+        
+        // Fire and forget - don't wait for response
+        makePredictionRef.current(samplesForPrediction).finally(() => {
+          // Allow next prediction after this one completes
+          isRealTimePredicting.current = false;
+        });
       }
       
-      return newBuffer;
-    });
-  }, [isContinuousMode, connectedDevice, isSimulating, sensorBuffer, isRecording]);
+      return;
+    }
+
+    // When in manual mode and not recording, don't collect data
+  }, [isRecording, recognitionMode]);
 
   const handleStopSimulation = () => {
     setIsSimulating(false);
     isCollectingRef.current = false;
   };
+
+  // Manual prediction recording handlers
+  const handleStartPredictionRecording = useCallback(() => {
+    console.log('[App] Starting manual prediction recording');
+    isRecordingPredictionRef.current = true;
+    setIsRecordingPrediction(true);
+    setPredictionProgress(0);
+    setSensorBuffer([]);
+  }, []);
+
+  const handleStopPredictionRecording = useCallback(() => {
+    console.log('[App] Stopping manual prediction recording');
+    isRecordingPredictionRef.current = false;
+    setIsRecordingPrediction(false);
+    setPredictionProgress(0);
+    
+    // If we have some samples, make prediction with what we have
+    if (sensorBuffer.length > 50) {
+      setTimeout(() => {
+        makePredictionRef.current(sensorBuffer);
+      }, 10);
+    }
+    
+    setSensorBuffer([]);
+  }, [sensorBuffer]);
 
   // Data recording handlers
   const handleStartRecording = useCallback((letter: string) => {
@@ -433,10 +518,6 @@ function App() {
     alert(`✅ Data exported! ${allData.reduce((acc, r) => acc + r.samples.length, 0)} samples saved to CSV`);
   };
 
-  const getCurrentWord = useCallback(() => {
-    return detectedLettersRef.current.join('');
-  }, []);
-
   const handleClearWord = () => {
     console.log('[App] Clearing word');
     setDetectedLetters([]);
@@ -446,10 +527,6 @@ function App() {
 
   const handleDeleteLetter = () => {
     setDetectedLetters(prev => prev.slice(0, -1));
-  };
-
-  const handleResetWordFinalization = () => {
-    setIsWordFinalized(false);
   };
 
   return (
@@ -500,7 +577,33 @@ function App() {
         {/* Connection Manager (for future glove support) */}
         <ConnectionManager 
           onSensorData={handleSensorData}
-          onConnectionChange={(connected) => setConnectedDevice(connected ? 'serial-device' : null)}
+          onConnectionChange={(connected) => {
+            setConnectedDevice(connected ? 'serial-device' : null);
+            
+            // Clear all buffers and state when disconnecting
+            if (!connected) {
+              console.log('[App] Connection lost - clearing all buffers and state');
+              setSensorBuffer([]);
+              setCurrentSample(null);
+              setDataLog([]);
+              dataLogRef.current = [];
+              realTimeBufferRef.current = []; // Clear real-time buffer
+              isRealTimePredicting.current = false;
+              lastPredictedLetterRef.current = '';
+              lastPredictionTimeRef.current = 0;
+              setPredictionProgress(0);
+              setIsRecordingPrediction(false);
+              isRecordingPredictionRef.current = false;
+              // Don't clear prediction/letters - user might want to see last result
+            }
+          }}
+        />
+
+        {/* Auto-Calibrator */}
+        <Calibrator
+          onCalibrationComplete={handleCalibrationComplete}
+          isConnected={connectedDevice !== null}
+          currentSample={currentSample}
         />
 
         {/* Recognition Mode Selector */}
@@ -520,13 +623,20 @@ function App() {
             Recognition Mode
           </label>
           <select
-            value={isContinuousMode ? 'continuous' : 'single'}
+            value={recognitionMode}
             onChange={(e) => {
-              const newMode = e.target.value === 'continuous';
-              setIsContinuousMode(newMode);
-              if (newMode) {
+              const newMode = e.target.value as 'manual' | 'single' | 'continuous';
+              setRecognitionMode(newMode);
+              if (newMode !== 'continuous') {
                 handleClearWord();
               }
+              // Clear buffer when switching modes
+              setSensorBuffer([]);
+              realTimeBufferRef.current = [];
+              isRealTimePredicting.current = false;
+              lastPredictedLetterRef.current = '';
+              lastPredictionTimeRef.current = 0;
+              setCurrentPrediction(null);
             }}
             style={{
               width: '100%',
@@ -539,26 +649,194 @@ function App() {
               cursor: 'pointer'
             }}
           >
-            <option value="single">Single Letter Mode (200 samples, 4s)</option>
-            <option value="continuous">Continuous Mode (150 samples, 3s per letter)</option>
+            <option value="manual">Manual Mode (Click button to record)</option>
+            <option value="single">Single Letter Mode (Real-time predictions)</option>
+            <option value="continuous">Continuous Mode (Real-time word building)</option>
           </select>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.5rem 0 0 0' }}>
-            {isContinuousMode 
-              ? 'Letters automatically build into words. Stop signing for 2s to finalize.'
-              : 'Predicts one letter at a time. TTS speaks the letter immediately.'}
+            {recognitionMode === 'manual' 
+              ? 'Click "Record Sign" button to manually capture 200 samples for prediction.'
+              : recognitionMode === 'single'
+              ? '🔴 LIVE: Real-time predictions with rolling 200-sample window. Updates every 2 seconds.'
+              : '🔴 LIVE: Real-time predictions building words. Updates every 2 seconds. Hold each letter steady!'}
           </p>
         </div>
 
-        {/* Quick Demo */}
-        <QuickDemo
-          onSimulateLetter={simulateLetter}
-          isActive={isSimulating}
-          onStopSimulator={handleStopSimulation}
-          quickDemoCallbackRef={quickDemoCallbackRef}
-          detectedWord={detectedLetters.join('')}
+        {/* 3D Hand Visualization + Real-Time Sensor Display - Side by Side */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '1rem',
+          marginBottom: '1rem'
+        }}>
+          {/* 3D Hand Visualization */}
+          <HandVisualization3D
+            currentSample={currentSample}
+            isActive={isSimulating || connectedDevice !== null}
+            prediction={currentPrediction?.letter}
+            confidence={currentPrediction?.confidence}
+            onTestSample={(sample) => setCurrentSample(sample)}
+            baselines={baselines}
+            maxbends={maxbends}
+          />
+
+          {/* Real-Time Sensor Display */}
+          <SensorDisplay 
+            currentSample={currentSample}
+            isActive={isSimulating || connectedDevice !== null}
+            sampleCount={sensorBuffer.length}
+            targetSamples={recognitionMode === 'continuous' ? 150 : 200}
+            isCollecting={isCollectingRef.current}
+            baselines={baselines}
+            maxbends={maxbends}
+          />
+        </div>
+
+        {/* Manual Prediction Recording */}
+        {/* Manual Sign Recording - Only show in Manual mode */}
+        {connectedDevice && recognitionMode === 'manual' && (
+          <div style={{
+            padding: '1rem',
+            borderRadius: '12px',
+            border: '1px solid var(--border-color)',
+            background: 'var(--bg-card)',
+            marginBottom: '1rem'
+          }}>
+            <h3 style={{
+              fontSize: '1.1rem',
+              fontWeight: '600',
+              color: 'var(--text-primary)',
+              marginBottom: '0.75rem'
+            }}>
+              📝 Manual Sign Recording
+            </h3>
+            <p style={{
+              fontSize: '0.9rem',
+              color: 'var(--text-secondary)',
+              marginBottom: '1rem'
+            }}>
+              Click "Record Sign" to manually capture 200 samples (4 seconds) for prediction
+            </p>
+            
+            {isRecordingPrediction ? (
+              <div>
+                <div style={{
+                  width: '100%',
+                  height: '24px',
+                  backgroundColor: 'var(--input-bg)',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  marginBottom: '0.75rem',
+                  border: '1px solid var(--border-color)'
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${predictionProgress}%`,
+                    backgroundColor: 'var(--accent-color)',
+                    transition: 'width 0.1s ease',
+                    borderRadius: '12px'
+                  }} />
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button
+                    onClick={handleStopPredictionRecording}
+                    style={{
+                      padding: '0.75rem 1.5rem',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border-color)',
+                      background: 'var(--bg-button-danger)',
+                      color: 'white',
+                      fontSize: '0.95rem',
+                      fontWeight: '600',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ⏹️ Stop Recording
+                  </button>
+                  <span style={{
+                    fontSize: '0.9rem',
+                    color: 'var(--text-secondary)'
+                  }}>
+                    Recording... {Math.round(predictionProgress)}%
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={handleStartPredictionRecording}
+                disabled={isRecording || isAnalyzing}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)',
+                  background: isRecording || isAnalyzing ? 'var(--bg-button-disabled)' : 'var(--accent-color)',
+                  color: 'white',
+                  fontSize: '0.95rem',
+                  fontWeight: '600',
+                  cursor: isRecording || isAnalyzing ? 'not-allowed' : 'pointer',
+                  opacity: isRecording || isAnalyzing ? 0.5 : 1
+                }}
+              >
+                🎬 Record Sign (200 samples)
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Automatic Mode Status Indicator */}
+        {connectedDevice && (recognitionMode === 'single' || recognitionMode === 'continuous') && (
+          <div style={{
+            padding: '1rem',
+            borderRadius: '12px',
+            border: '1px solid var(--accent-color)',
+            background: 'var(--bg-card)',
+            marginBottom: '1rem',
+            textAlign: 'center'
+          }}>
+            <div style={{
+              fontSize: '1.1rem',
+              fontWeight: '600',
+              color: 'var(--accent-color)',
+              marginBottom: '0.5rem'
+            }}>
+              {recognitionMode === 'single' ? '🔴 LIVE: Real-Time Single Letter Mode' : '🔴 LIVE: Real-Time Continuous Mode'}
+            </div>
+            <p style={{
+              fontSize: '0.9rem',
+              color: 'var(--text-secondary)',
+              marginBottom: '0.5rem'
+            }}>
+              {recognitionMode === 'single' 
+                ? 'Predictions every 2 seconds with rolling 200-sample window. Hold your hand steady!'
+                : 'Building words in real-time. New predictions every 2 seconds as you sign.'}
+            </p>
+            <div style={{
+              fontSize: '0.85rem',
+              color: 'var(--text-primary)',
+              fontWeight: '600',
+              display: 'flex',
+              justifyContent: 'center',
+              gap: '1rem',
+              flexWrap: 'wrap'
+            }}>
+              <span>Buffer: {sensorBuffer.length}/200 samples</span>
+              {sensorBuffer.length >= 200 && (
+                <span style={{ color: 'var(--accent-color)' }}>✓ Ready for predictions</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Prediction View */}
+        <PredictionView
+          prediction={currentPrediction}
+          isLoading={isAnalyzing}
+          error={predictionError}
+          sampleCount={sensorBuffer.length}
+          isContinuousMode={recognitionMode === 'continuous'}
+          currentWord={detectedLetters.join('')}
           onClearWord={handleClearWord}
-          onResetWordFinalization={handleResetWordFinalization}
-          getCurrentWord={getCurrentWord}
+          onDeleteLetter={handleDeleteLetter}
         />
 
         {/* Data Recorder */}
@@ -571,52 +849,95 @@ function App() {
           isConnected={connectedDevice !== null}
         />
 
-        {/* Simulator Control */}
-        <SimulatorControl
-          onSensorData={handleSensorData}
-          isSimulating={isSimulating}
-          setIsSimulating={setIsSimulating}
-          onCurrentSampleChange={setCurrentSample}
-          isContinuousMode={isContinuousMode}
-          simulateLetterRef={simulateLetterRef}
-          onClearBuffer={() => {
-            console.log('[App] Clearing buffer for new letter');
-            setSensorBuffer([]);
-            isCollectingRef.current = true;
-            simulationStartTimeRef.current = Date.now();
-          }}
-        />
-
-        {/* 3D Hand Visualization */}
-        <HandVisualization3D
-          currentSample={currentSample}
-          isActive={isSimulating || connectedDevice !== null}
-          prediction={currentPrediction?.letter}
-          confidence={currentPrediction?.confidence}
-          onTestSample={(sample) => setCurrentSample(sample)}
-        />
-
-        {/* Real-Time Sensor Display */}
-        <SensorDisplay 
-          currentSample={currentSample}
-          isActive={isSimulating || connectedDevice !== null}
-          sampleCount={sensorBuffer.length}
-          targetSamples={isContinuousMode ? 150 : 200}
-          isCollecting={isCollectingRef.current}
-          motionDetected={motionDetected}
-        />
-
-        {/* Prediction View */}
-        <PredictionView
-          prediction={currentPrediction}
-          isLoading={isAnalyzing}
-          error={predictionError}
-          sampleCount={sensorBuffer.length}
-          isContinuousMode={isContinuousMode}
-          currentWord={detectedLetters.join('')}
-          onClearWord={handleClearWord}
-          onDeleteLetter={handleDeleteLetter}
-        />
+        {/* Data Log for Debugging */}
+        {dataLog.length > 0 && (
+          <div style={{
+            padding: '1.5rem',
+            borderRadius: '12px',
+            border: '1px solid var(--border-color)',
+            background: 'var(--bg-card)',
+            marginBottom: '1rem'
+          }}>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '1rem'
+            }}>
+              <h3 style={{ 
+                fontSize: '1.25rem',
+                fontWeight: '700',
+                color: 'var(--text-primary)',
+                margin: 0
+              }}>
+                📊 Serial Data Log (Last 100 samples)
+              </h3>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  onClick={() => {
+                    const text = dataLog.join('\n');
+                    navigator.clipboard.writeText(text);
+                    alert('Copied to clipboard!');
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--input-bg)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.875rem',
+                    cursor: 'pointer',
+                    fontWeight: '500'
+                  }}
+                >
+                  📋 Copy All
+                </button>
+                <button
+                  onClick={() => {
+                    setDataLog([]);
+                    dataLogRef.current = [];
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--input-bg)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.875rem',
+                    cursor: 'pointer',
+                    fontWeight: '500'
+                  }}
+                >
+                  🗑️ Clear
+                </button>
+              </div>
+            </div>
+            <div style={{
+              maxHeight: '300px',
+              overflowY: 'auto',
+              background: 'var(--input-bg)',
+              borderRadius: '8px',
+              padding: '1rem',
+              fontFamily: 'monospace',
+              fontSize: '0.875rem',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-color)'
+            }}>
+              {dataLog.map((line, index) => (
+                <div key={index} style={{ whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>
+                  {line}
+                </div>
+              ))}
+            </div>
+            <p style={{ 
+              fontSize: '0.75rem', 
+              color: 'var(--text-secondary)', 
+              margin: '0.75rem 0 0 0' 
+            }}>
+              Format: Thumb, Index, Middle, Ring, Pinky (same as Serial Monitor)
+            </p>
+          </div>
+        )}
 
         {/* Debug Log */}
         <DebugLog data={debugLogData} />

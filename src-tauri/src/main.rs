@@ -268,12 +268,25 @@ fn connect_serial(
     
     // Close existing connection if any
     *port_lock = None;
+    drop(port_lock);
     
-    // Open the serial port
-    let port = serialport::new(&port_name, 115200)
-        .timeout(Duration::from_millis(100))
+    // Wait for any previous reading threads to fully stop
+    thread::sleep(Duration::from_millis(200));
+    
+    // Reacquire lock and open the serial port
+    let mut port_lock = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    
+    // Open the serial port with minimal timeout for fast reads
+    let mut port = serialport::new(&port_name, 115200)
+        .timeout(Duration::from_millis(10)) // Short timeout for responsive reads
         .open()
         .map_err(|e| format!("Failed to open port {}: {}", port_name, e))?;
+    
+    // Clear OS-level buffers (just like Arduino IDE does)
+    let _ = port.clear(serialport::ClearBuffer::All);
+    
+    // Small delay for hardware to stabilize
+    thread::sleep(Duration::from_millis(50));
     
     *port_lock = Some(port);
     
@@ -285,11 +298,22 @@ fn disconnect_serial(
     state: tauri::State<SerialPortState>,
     reading_state: tauri::State<ReadingActiveState>,
 ) -> Result<String, String> {
+    // First stop reading
     let mut reading_lock = reading_state.lock().map_err(|e| format!("Lock error: {}", e))?;
     *reading_lock = false; // Stop reading
+    drop(reading_lock); // Release lock
     
+    // Give the reading thread time to stop
+    thread::sleep(Duration::from_millis(100));
+    
+    // Now close the port
     let mut port_lock = state.lock().map_err(|e| format!("Lock error: {}", e))?;
     *port_lock = None;
+    drop(port_lock);
+    
+    // Additional delay to ensure thread cleanup
+    thread::sleep(Duration::from_millis(50));
+    
     Ok("Disconnected".to_string())
 }
 
@@ -332,9 +356,9 @@ fn start_reading_serial(
     
     thread::spawn(move || {
         let mut buffer = String::new();
+        let mut first_line_skipped = false; // Skip first line (might be partial after reconnect)
         
         loop {
-            // Check if reading is active
             let is_reading = {
                 match reading_state_clone.lock() {
                     Ok(lock) => *lock,
@@ -343,22 +367,25 @@ fn start_reading_serial(
             };
             
             if !is_reading {
-                thread::sleep(Duration::from_millis(100)); // Wait while paused
+                buffer.clear();
+                first_line_skipped = false; // Reset on pause
+                thread::sleep(Duration::from_millis(100));
                 continue;
             }
             
-            // Try to get the port
             let mut port_lock = match state_clone.lock() {
                 Ok(lock) => lock,
                 Err(_) => break,
             };
             
             if port_lock.is_none() {
-                break; // Connection closed
+                buffer.clear();
+                first_line_skipped = false; // Reset on disconnect
+                break;
             }
             
-            // Read from serial port
-            let mut serial_buf: Vec<u8> = vec![0; 128];
+            // Read bytes from serial port continuously (no sleep!)
+            let mut serial_buf: Vec<u8> = vec![0; 256]; // Larger buffer
             match port_lock.as_mut().unwrap().read(&mut serial_buf) {
                 Ok(bytes_read) => {
                     if bytes_read > 0 {
@@ -370,17 +397,28 @@ fn start_reading_serial(
                             let line = buffer[..newline_pos].trim().to_string();
                             buffer = buffer[newline_pos + 1..].to_string();
                             
-                            // Parse the line as sensor data
-                            // Expected format: "440,612,618,548,528" (5 comma-separated values)
+                            // Skip first line (might be partial/corrupted from reconnect)
+                            if !first_line_skipped {
+                                first_line_skipped = true;
+                                continue;
+                            }
+                            
+                            // Skip empty lines
+                            if line.is_empty() {
+                                continue;
+                            }
+                            
+                            // Parse: "2880,1910,2127,2295,2335"
                             let values: Vec<&str> = line.split(',').collect();
+                            
                             if values.len() == 5 {
                                 let parsed: Vec<i32> = values
                                     .iter()
                                     .filter_map(|s| s.trim().parse::<i32>().ok())
                                     .collect();
                                 
+                                // Only emit if we successfully parsed all 5 values
                                 if parsed.len() == 5 {
-                                    // Send to frontend
                                     let _ = window.emit("serial-data", parsed);
                                 }
                             }
@@ -388,19 +426,14 @@ fn start_reading_serial(
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    // Timeout is normal, continue reading
+                    // Timeout is fine - just loop again immediately
                 }
-                Err(e) => {
-                    eprintln!("Serial read error: {}", e);
-                    break;
-                }
+                Err(_) => break,
             }
             
-            drop(port_lock); // Release lock
-            thread::sleep(Duration::from_millis(10)); // Small delay
+            drop(port_lock);
+            // NO SLEEP - read continuously like Arduino does!
         }
-        
-        println!("Serial reading thread stopped");
     });
     
     Ok(())

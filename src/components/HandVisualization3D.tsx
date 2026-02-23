@@ -1,5 +1,5 @@
 // src/components/HandVisualization3D.tsx
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import Plot from 'react-plotly.js';
 import { useTheme } from '../context/ThemeContext';
 import './HandVisualization3D.css';
@@ -10,6 +10,8 @@ interface HandVisualization3DProps {
   prediction?: string | null;
   confidence?: number | null;
   onTestSample?: (sample: number[]) => void; // New callback to test samples
+  baselines?: number[];
+  maxbends?: number[];
 }
 
 // Hand skeleton structure - rotated so palm faces away from viewer
@@ -55,22 +57,11 @@ const HAND_SKELETON = {
   ]
 };
 
-// Sensor calibration values (from SimulatorControl)
-const BASELINES = [440, 612, 618, 548, 528]; // thumb, index, middle, ring, pinky (straight)
-const MAXBENDS = [600, 900, 900, 850, 760];   // fully bent
-
-// Map sensor value (0-1023) to bend angle (0-90 degrees)
-// Higher sensor value = more bent
-const sensorToAngle = (value: number, fingerIndex: number): number => {
-  const baseline = BASELINES[fingerIndex];
-  const maxbend = MAXBENDS[fingerIndex];
-  
-  // Normalize: 0 at baseline (straight), 1 at maxbend (fully bent)
-  const normalized = Math.max(0, Math.min(1, (value - baseline) / (maxbend - baseline)));
-  
-  // Convert to bend angle: 0° straight, 90° fully bent
-  return normalized * 90;
-};
+// Default sensor calibration values (matches App.tsx)
+// These are fallback values - the actual calibration comes from props
+// Based on thermistor readings from properly worn glove
+const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348]; // straight position (higher values)
+const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position (lower values)
 
 // Apply rotation to a point around Y-axis (finger bending)
 const rotatePoint = (point: number[], angle: number, pivot: number[]): number[] => {
@@ -130,7 +121,9 @@ export default function HandVisualization3D({
   isActive, 
   prediction, 
   confidence,
-  onTestSample
+  onTestSample,
+  baselines = DEFAULT_BASELINES,
+  maxbends = DEFAULT_MAXBENDS
 }: HandVisualization3DProps) {
   const { theme } = useTheme();
   
@@ -143,9 +136,21 @@ export default function HandVisualization3D({
   const textPrimary = isDark ? '#f1f5f9' : '#111827';
   const textSecondary = isDark ? '#94a3b8' : '#6b7280';
 
+  // Map sensor value to bend angle using calibration values
+  const sensorToAngle = useCallback((value: number, fingerIndex: number): number => {
+    const baseline = baselines[fingerIndex];
+    const maxbend = maxbends[fingerIndex];
+    
+    // Normalize: 0 at baseline (straight), 1 at maxbend (fully bent)
+    const normalized = Math.max(0, Math.min(1, (value - baseline) / (maxbend - baseline)));
+    
+    // Convert to bend angle: 0° straight, 90° fully bent
+    return normalized * 90;
+  }, [baselines, maxbends]);
+
   const plotData = useMemo(() => {
     // Default hand position if no data yet - use baseline values (straight fingers)
-    const defaultSample = [440, 612, 618, 548, 528]; // BASELINES - completely straight hand
+    const defaultSample = baselines; // Use calibration baselines
     const sampleToUse = currentSample && currentSample.length >= 5 ? currentSample : defaultSample;
 
     // Calculate bend angles for each finger using per-finger calibration
@@ -184,7 +189,7 @@ export default function HandVisualization3D({
         symbol: 'circle'
       }
     }));
-  }, [currentSample]);
+  }, [currentSample, baselines, sensorToAngle]);
 
   const title = prediction && confidence 
     ? `Prediction: ${prediction} | Conf: ${Math.round(confidence * 100)}%`
@@ -279,7 +284,7 @@ export default function HandVisualization3D({
       {onTestSample && (
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
           <button
-            onClick={() => onTestSample([440, 612, 618, 548, 528])} // BASELINES - straight
+            onClick={() => onTestSample([2700, 1650, 1850, 2110, 2125])} // BASELINES - straight
             style={{
               padding: '0.5rem 1rem',
               borderRadius: '6px',
@@ -293,7 +298,7 @@ export default function HandVisualization3D({
             🖐️ Straight
           </button>
           <button
-            onClick={() => onTestSample([600, 900, 900, 850, 760])} // MAXBENDS - fully bent
+            onClick={() => onTestSample([2200, 1300, 1480, 1640, 1720])} // MAXBENDS - fully bent
             style={{
               padding: '0.5rem 1rem',
               borderRadius: '6px',
