@@ -11,7 +11,6 @@ interface CalibratorProps {
 }
 
 const FINGER_NAMES = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
-const FINGER_EMOJIS = ['👍', '☝️', '🖕', '💍', '🤙'];
 
 type CalibrationStep = 'idle' | 'recording-straight' | 'recording-bent';
 
@@ -203,7 +202,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
         color: 'var(--text-primary)',
         marginBottom: '0.5rem'
       }}>
-        🎯 Per-Finger Calibrator
+        Per-Finger Calibrator
       </h3>
 
       <p style={{
@@ -223,7 +222,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
           marginBottom: '1rem'
         }}>
           <p style={{ color: '#ef4444', margin: 0, fontSize: '0.875rem' }}>
-            ⚠️ Please connect to your glove first
+            Please connect to your glove first
           </p>
         </div>
       )}
@@ -267,7 +266,6 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
                 gap: '0.25rem'
               }}
             >
-              <span style={{ fontSize: '1.25rem' }}>{FINGER_EMOJIS[index]}</span>
               <span>{name}</span>
               {isCalibrated && <span style={{ fontSize: '0.875rem' }}>✓</span>}
             </button>
@@ -292,12 +290,8 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
           <h4 style={{
             margin: 0,
             color: 'var(--text-primary)',
-            fontSize: '1.125rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem'
+            fontSize: '1.125rem'
           }}>
-            <span style={{ fontSize: '1.5rem' }}>{FINGER_EMOJIS[currentFinger]}</span>
             Calibrating: {FINGER_NAMES[currentFinger]}
           </h4>
           
@@ -318,7 +312,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
                 opacity: step === 'idle' ? 1 : 0.5
               }}
             >
-              🔄 Recalibrate
+              Recalibrate
             </button>
           )}
         </div>
@@ -447,7 +441,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
             border: '1px solid rgba(16, 185, 129, 0.3)'
           }}>
             <p style={{ margin: 0, fontSize: '0.75rem', color: '#10b981', fontWeight: '600' }}>
-              ✓ {FINGER_NAMES[currentFinger]} calibrated!
+              {FINGER_NAMES[currentFinger]} calibrated
             </p>
             <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.625rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
               Straight: {currentFingerData.baseline} | Bent: {currentFingerData.maxbend}
@@ -466,7 +460,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
           marginBottom: '1rem'
         }}>
           <h4 style={{ margin: '0 0 0.5rem 0', color: allCalibrated ? '#10b981' : '#3b82f6', fontSize: '1rem' }}>
-            {allCalibrated ? '✓ All Fingers Calibrated!' : `${calibratedCount}/5 Fingers Calibrated`}
+            {allCalibrated ? 'All Fingers Calibrated' : `${calibratedCount}/5 Fingers Calibrated`}
           </h4>
           
           {!allCalibrated && (
@@ -485,9 +479,9 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
                   color: isCalibrated ? 'var(--text-primary)' : 'var(--text-secondary)',
                   opacity: isCalibrated ? 1 : 0.6
                 }}>
-                  <strong>{FINGER_EMOJIS[index]} {name}:</strong> {
-                    isCalibrated 
-                      ? `${fc.baseline} → ${fc.maxbend} ✓` 
+                  <strong>{name}:</strong> {
+                    isCalibrated
+                      ? `${fc.baseline} → ${fc.maxbend}`
                       : `${currentBaselines[index]} → ${currentMaxbends[index]} (default)`
                   }
                 </div>
@@ -510,7 +504,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
                 cursor: 'pointer'
               }}
             >
-              {allCalibrated ? '✓ Apply All' : `Apply ${calibratedCount} Finger${calibratedCount > 1 ? 's' : ''}`}
+              {allCalibrated ? 'Apply All' : `Apply ${calibratedCount} Finger${calibratedCount > 1 ? 's' : ''}`}
             </button>
             <button
               onClick={reset}
