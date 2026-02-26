@@ -16,10 +16,6 @@ import "./App.css";
 const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348]; // straight position (higher values)
 const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position (lower values)
 
-// Flex sensor ranges used by the ML model (from test_serial_simulator.py)
-const MODEL_BASELINES = [440, 612, 618, 548, 528];  // straight (lower values for flex sensors)
-const MODEL_MAXBENDS = [650, 900, 900, 850, 800];   // bent (higher values for flex sensors)
-
 // Removed unused interface PredictionRecord
 
 interface DebugLogData {
@@ -200,15 +196,13 @@ function App() {
     setIsAnalyzing(true);
     setPredictionError(null);
 
-    // Use normalized model: send 0-1 values (local dev model or cloud normalized)
-    // Use flex model: convert to legacy flex sensor range (440-900)
-    const useNormalizedModel = useLocalModel || import.meta.env.VITE_USE_NORMALIZED_MODEL === 'true';
+    // Always send normalized 0-1 values (both local model and cloud API now expect this)
 
     // Simulator/Python script outputs match SimulatorControl's BASELINES/MAXBENDS; real glove uses user calibration
     const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
     const SIMULATOR_MAXBENDS = [2200, 1300, 1480, 1640, 1720];
-    // When using local model + serial: treat as Python simulator if uncalibrated (test_serial_simulator.py)
-    const useSerialSimulatorCal = useLocalModel && connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
+    // If serial connected but never calibrated (values still match defaults), treat as Python simulator
+    const useSerialSimulatorCal = connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
     const calBaselines = isSimulating ? SIMULATOR_BASELINES : (useSerialSimulatorCal ? SIMULATOR_BASELINES : baselines);
     const calMaxbends = isSimulating ? SIMULATOR_MAXBENDS : (useSerialSimulatorCal ? SIMULATOR_MAXBENDS : maxbends);
 
@@ -221,17 +215,11 @@ function App() {
         const normalized = (thermBaseline - value) / (thermBaseline - thermMaxBend);
         const clamped = Math.max(0, Math.min(1, normalized));
 
-        if (useNormalizedModel) {
-          return clamped; // Send 0-1 for normalized model
-        }
-        // Denormalize to flex range for legacy model
-        const flexBaseline = MODEL_BASELINES[fingerIndex];
-        const flexMaxBend = MODEL_MAXBENDS[fingerIndex];
-        return Math.round(flexBaseline + clamped * (flexMaxBend - flexBaseline));
+        return clamped; // Always send 0-1 (both local and cloud API use normalized model)
       })
     );
 
-    console.log(`[App] Sending ${useNormalizedModel ? 'normalized 0-1' : 'flex sensor'} format`);
+    console.log('[App] Sending normalized 0-1 format');
     console.log('[App] First sample:', convertedSamples[0]);
 
     // Prepare debug data
@@ -726,8 +714,7 @@ function App() {
           </p>
         </div>
 
-        {/* 3D Hand Visualization + Real-Time Sensor Display - Side by Side */}
-        {/* Use simulator calibration when: in-app simulator OR Python serial simulator (uncalibrated) */}
+        {/* 3D Hand (left, full height) | Sensor Display + Prediction View (right column) */}
         {(() => {
           const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
           const SIMULATOR_MAXBENDS = [2200, 1300, 1480, 1640, 1720];
@@ -741,7 +728,8 @@ function App() {
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
           gap: '1rem',
-          marginBottom: '1rem'
+          marginBottom: '1rem',
+          alignItems: 'start'
         }}>
           <HandVisualization3D
             currentSample={currentSample}
@@ -753,15 +741,29 @@ function App() {
             maxbends={calMaxbends}
           />
 
-          <SensorDisplay 
-            currentSample={currentSample}
-            isActive={isSimulating || connectedDevice !== null}
-            sampleCount={sensorBuffer.length}
-            targetSamples={recognitionMode === 'manual' ? 200 : 50}
-            isCollecting={isCollectingRef.current}
-            baselines={calBaselines}
-            maxbends={calMaxbends}
-          />
+          {/* Right column: Sensor Display on top, Prediction View below */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <SensorDisplay
+              currentSample={currentSample}
+              isActive={isSimulating || connectedDevice !== null}
+              sampleCount={sensorBuffer.length}
+              targetSamples={recognitionMode === 'manual' ? 200 : 50}
+              isCollecting={isCollectingRef.current}
+              baselines={calBaselines}
+              maxbends={calMaxbends}
+            />
+            <PredictionView
+              prediction={currentPrediction}
+              isLoading={isAnalyzing}
+              error={predictionError}
+              sampleCount={sensorBuffer.length}
+              isContinuousMode={recognitionMode === 'continuous'}
+              currentWord={detectedLetters.join('')}
+              onClearWord={handleClearWord}
+              onDeleteLetter={handleDeleteLetter}
+              isRealTimeMode={recognitionMode === 'single' || recognitionMode === 'continuous'}
+            />
+          </div>
         </div>
           );
         })()}
@@ -857,72 +859,11 @@ function App() {
           </div>
         )}
 
-        {/* Automatic Mode Status Indicator */}
-        {connectedDevice && (recognitionMode === 'single' || recognitionMode === 'continuous') && (
-          <div style={{
-            padding: '1rem',
-            borderRadius: '12px',
-            border: '1px solid var(--accent-color)',
-            background: 'var(--bg-card)',
-            marginBottom: '1rem',
-            textAlign: 'center'
-          }}>
-            <div style={{
-              fontSize: '1.1rem',
-              fontWeight: '600',
-              color: 'var(--accent-color)',
-              marginBottom: '0.5rem'
-            }}>
-              {recognitionMode === 'single' ? '🔴 LIVE: Real-Time Single Letter Mode' : '🔴 LIVE: Real-Time Continuous Mode'}
-            </div>
-            <p style={{
-              fontSize: '0.9rem',
-              color: 'var(--text-secondary)',
-              marginBottom: '0.5rem'
-            }}>
-              {recognitionMode === 'single' 
-                ? 'Predictions 5x per second with rolling 50-sample window. Hold each letter ~1 sec!'
-                : 'Building words in real-time. New predictions 5x per second as you sign.'}
-            </p>
-            <div style={{
-              fontSize: '0.85rem',
-              color: 'var(--text-primary)',
-              fontWeight: '600',
-              display: 'flex',
-              justifyContent: 'center',
-              gap: '1rem',
-              flexWrap: 'wrap'
-            }}>
-              <span>Buffer: {sensorBuffer.length}/50 samples</span>
-              {sensorBuffer.length >= 50 && (
-                <span style={{ color: 'var(--accent-color)' }}>✓ Ready for predictions</span>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* Prediction View */}
-        <PredictionView
-          prediction={currentPrediction}
-          isLoading={isAnalyzing}
-          error={predictionError}
-          sampleCount={sensorBuffer.length}
-          isContinuousMode={recognitionMode === 'continuous'}
-          currentWord={detectedLetters.join('')}
-          onClearWord={handleClearWord}
-          onDeleteLetter={handleDeleteLetter}
-          isRealTimeMode={recognitionMode === 'single' || recognitionMode === 'continuous'}
-        />
 
-        {/* Data Recorder */}
-        <DataRecorder
-          isRecording={isRecording}
-          onStartRecording={handleStartRecording}
-          onStopRecording={handleStopRecording}
-          recordedSamples={recordedSamples.length}
-          targetSamples={150}
-          isConnected={connectedDevice !== null}
-        />
+        {/* Debug Log */}
+        <DebugLog data={debugLogData} />
+      </div>
 
         {/* Data Log for Debugging */}
         {dataLog.length > 0 && (
@@ -1014,9 +955,17 @@ function App() {
           </div>
         )}
 
-        {/* Debug Log */}
-        <DebugLog data={debugLogData} />
-      </div>
+
+
+        {/* Data Recorder */}
+        <DataRecorder
+          isRecording={isRecording}
+          onStartRecording={handleStartRecording}
+          onStopRecording={handleStopRecording}
+          recordedSamples={recordedSamples.length}
+          targetSamples={150}
+          isConnected={connectedDevice !== null}
+        />
 
       <div className="footer">
         <p className="info-text">{t("app.footer")}</p>

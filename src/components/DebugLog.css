@@ -39,8 +39,6 @@
 
 .debug-log-content {
   padding: 0 1rem 1rem 1rem;
-  max-height: 400px;
-  overflow-y: auto;
 }
 
 .debug-section {
