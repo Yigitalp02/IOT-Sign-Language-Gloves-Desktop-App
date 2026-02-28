@@ -1,17 +1,25 @@
 // src/components/HandVisualization3D.tsx
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState, useRef, useEffect } from 'react';
 import Plot from 'react-plotly.js';
 import { useTheme } from '../context/ThemeContext';
 import './HandVisualization3D.css';
+
+interface QuaternionData {
+  w: number;
+  x: number;
+  y: number;
+  z: number;
+}
 
 interface HandVisualization3DProps {
   currentSample: number[] | null;
   isActive: boolean;
   prediction?: string | null;
   confidence?: number | null;
-  onTestSample?: (sample: number[]) => void; // New callback to test samples
+  onTestSample?: (sample: number[]) => void;
   baselines?: number[];
   maxbends?: number[];
+  quaternion?: QuaternionData | null;
 }
 
 // Hand skeleton structure - rotated so palm faces away from viewer
@@ -22,38 +30,38 @@ interface HandVisualization3DProps {
 const HAND_SKELETON = {
   // Thumb (CH0) - extends to the side
   thumb: [
-    [0, -0.8, -2],       // SHARED palm origin
-    [0.9, 0.4, -1.9],      // thumb knuckle (extends to side)
-    [1.2, 1, -1.8],    // thumb middle joint
-    [1.35, 1.4, -1.7]      // thumb tip
+    [0, -0.8, 0],       // SHARED palm origin
+    [0.9, 0.4, 0.1],      // thumb knuckle (extends to side)
+    [1.2, 1, 0.2],    // thumb middle joint
+    [1.35, 1.4, 0.3]      // thumb tip
   ],
   // Index (CH1) - points upward
   index: [
-    [0, -0.8, -2],       // SHARED palm origin
-    [0.35, 0.8, -2],      // index knuckle (at palm edge)
-    [0.55, 1.5, -2],      // index middle joint
-    [0.65, 2.3, -2]       // index tip
+    [0, -0.8, 0],       // SHARED palm origin
+    [0.35, 0.8, 0],      // index knuckle (at palm edge)
+    [0.55, 1.5, 0],      // index middle joint
+    [0.65, 2.3, 0]       // index tip
   ],
   // Middle (CH2) - points upward
   middle: [
-    [0, -0.8, -2],       // SHARED palm origin
-    [0, 0.8, -2.2],      // middle knuckle (at palm edge)
-    [0, 1.6, -2.2],      // middle middle joint
-    [0, 2.5, -2.2]       // middle tip
+    [0, -0.8, 0],       // SHARED palm origin
+    [0, 0.8, -0.2],      // middle knuckle (at palm edge)
+    [0, 1.6, -0.2],      // middle middle joint
+    [0, 2.5, -0.2]       // middle tip
   ],
   // Ring (CH3) - points upward
   ring: [
-    [0, -0.8, -2],       // SHARED palm origin
-    [-0.35, 0.8, -2],     // ring knuckle (at palm edge)
-    [-0.55, 1.55, -2],     // ring middle joint
-    [-0.65, 2.6, -2]      // ring tip
+    [0, -0.8, 0],       // SHARED palm origin
+    [-0.35, 0.8, 0],     // ring knuckle (at palm edge)
+    [-0.55, 1.55, 0],     // ring middle joint
+    [-0.65, 2.6, 0]      // ring tip
   ],
   // Pinky (CH4) - points upward
   pinky: [
-    [0, -0.8, -2],       // SHARED palm origin
-    [-0.7, 0.7, -1.8],     // pinky knuckle (at palm edge)
-    [-0.9, 1.25, -1.8],     // pinky middle joint
-    [-1, 2, -1.8]      // pinky tip
+    [0, -0.8, 0],       // SHARED palm origin
+    [-0.7, 0.7, 0.2],     // pinky knuckle (at palm edge)
+    [-0.9, 1.25, 0.2],     // pinky middle joint
+    [-1, 2, 0.2]      // pinky tip
   ]
 };
 
@@ -82,6 +90,37 @@ const rotatePoint = (point: number[], angle: number, pivot: number[]): number[] 
   
   // Translate back
   return [tx + px, ry + py, rz + pz];
+};
+
+// Quaternion multiply: a * b  (Hamilton product)
+const quatMultiply = (a: QuaternionData, b: QuaternionData): QuaternionData => ({
+  w: a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
+  x: a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+  y: a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+  z: a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
+});
+
+// Quaternion inverse (conjugate for unit quaternion)
+const quatInverse = (q: QuaternionData): QuaternionData => ({
+  w: q.w, x: -q.x, y: -q.y, z: -q.z,
+});
+
+// Convert a unit quaternion (w, x, y, z) to a 3×3 rotation matrix (row-major)
+const quaternionToMatrix = (w: number, x: number, y: number, z: number): number[][] => {
+  return [
+    [1 - 2*(y*y + z*z),   2*(x*y - w*z),     2*(x*z + w*y)  ],
+    [2*(x*y + w*z),        1 - 2*(x*x + z*z), 2*(y*z - w*x)  ],
+    [2*(x*z - w*y),        2*(y*z + w*x),     1 - 2*(x*x + y*y)]
+  ];
+};
+
+// Apply a 3×3 rotation matrix to a 3D point
+const applyMatrix = (mat: number[][], p: number[]): number[] => {
+  return [
+    mat[0][0]*p[0] + mat[0][1]*p[1] + mat[0][2]*p[2],
+    mat[1][0]*p[0] + mat[1][1]*p[1] + mat[1][2]*p[2],
+    mat[2][0]*p[0] + mat[2][1]*p[1] + mat[2][2]*p[2],
+  ];
 };
 
 // Calculate bent finger positions
@@ -123,9 +162,31 @@ export default function HandVisualization3D({
   confidence,
   onTestSample,
   baselines = DEFAULT_BASELINES,
-  maxbends = DEFAULT_MAXBENDS
+  maxbends = DEFAULT_MAXBENDS,
+  quaternion = null
 }: HandVisualization3DProps) {
   const { theme } = useTheme();
+
+  // Reference quaternion for relative-rotation mode.
+  // The hand rotates relative to this pose, so the 3D model starts in its
+  // default position and only shows movements relative to the calibration pose.
+  const [refQuat, setRefQuat] = useState<QuaternionData | null>(null);
+  const refQuatRef = useRef<QuaternionData | null>(null);
+
+  // Auto-set reference on the very first IMU packet received
+  useEffect(() => {
+    if (quaternion && !refQuatRef.current) {
+      refQuatRef.current = quaternion;
+      setRefQuat(quaternion);
+    }
+  }, [quaternion]);
+
+  const handleSetReference = useCallback(() => {
+    if (quaternion) {
+      refQuatRef.current = quaternion;
+      setRefQuat(quaternion);
+    }
+  }, [quaternion]);
   
   // Determine if dark mode is active
   const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -163,13 +224,55 @@ export default function HandVisualization3D({
     const bentRing = calculateBentFinger(HAND_SKELETON.ring, bendAngles[3]);
     const bentPinky = calculateBentFinger(HAND_SKELETON.pinky, bendAngles[4]);
 
+    // Apply IMU quaternion rotation to all finger points (if BNO055 is available)
+    //
+    // Strategy:
+    //   1. q_rel   = inverse(refQuat) × q_current      — removes absolute sensor offset
+    //   2. q_viz   = remap axes (cyclic permutation)   — aligns BNO055 axes with viz axes
+    //   3. q_final = q_viz × Q_TARGET                  — Q_TARGET applied first (palm-down home),
+    //                                                     then q_viz on top in world frame
+    //
+    // BNO055 mounting (palm-down calibration pose):
+    //   BNO055 X  →  along fingers          →  viz  +Z
+    //   BNO055 Y  →  across hand width      →  viz  +X   ← wrist-ext axis (stop sign)
+    //   BNO055 Z  →  palm normal (upward)   →  viz  +Y
+    // Cyclic permutation: (bno_x, bno_y, bno_z) → (bno_y, bno_z, bno_x) = (viz_x, viz_y, viz_z)
+    //
+    // Q_TARGET = +90° around viz X:  puts default model into palm-down pose
+    //   • fingers +Y → +Z  (toward viewer, flat on floor plane)
+    //   • palm    +Z → −Y  (palm faces the floor ↓)
+    const Q_TARGET: QuaternionData = { w: Math.SQRT1_2, x: Math.SQRT1_2, y: 0, z: 0 };
+
+    const allFingers = [bentThumb, bentIndex, bentMiddle, bentRing, bentPinky];
+    let rotatedFingers = allFingers;
+    if (quaternion && refQuat) {
+      const { w, x, y, z } = quaternion;
+      const mag = Math.sqrt(w*w + x*x + y*y + z*z);
+      if (mag > 0.9) {
+        // Normalise incoming quaternion
+        const qCurrent: QuaternionData = { w: w/mag, x: x/mag, y: y/mag, z: z/mag };
+        // Relative rotation in BNO055 sensor frame
+        const qRel = quatMultiply(quatInverse(refQuat), qCurrent);
+        // Remap BNO055 axes → visualization axes (cyclic permutation)
+        const qRelViz: QuaternionData = { w: qRel.w, x: qRel.y, y: qRel.z, z: qRel.x };
+        // q_final = q_viz × Q_TARGET
+        //   Q_TARGET first  → model into palm-down
+        //   q_viz after     → physical rotation applied in world frame on top
+        const qFinal = quatMultiply(qRelViz, Q_TARGET);
+        const rotMat = quaternionToMatrix(qFinal.w, qFinal.x, qFinal.y, qFinal.z);
+        rotatedFingers = allFingers.map(finger =>
+          finger.map(point => applyMatrix(rotMat, point))
+        );
+      }
+    }
+
     // Create line traces for each finger
     const fingers = [
-      { name: 'Thumb (CH0)', data: bentThumb, color: '#ef4444' },
-      { name: 'Index (CH1)', data: bentIndex, color: '#f59e0b' },
-      { name: 'Middle (CH2)', data: bentMiddle, color: '#10b981' },
-      { name: 'Ring (CH3)', data: bentRing, color: '#3b82f6' },
-      { name: 'Pinky (CH4)', data: bentPinky, color: '#8b5cf6' }
+      { name: 'Thumb (CH0)', data: rotatedFingers[0], color: '#ef4444' },
+      { name: 'Index (CH1)', data: rotatedFingers[1], color: '#f59e0b' },
+      { name: 'Middle (CH2)', data: rotatedFingers[2], color: '#10b981' },
+      { name: 'Ring (CH3)', data: rotatedFingers[3], color: '#3b82f6' },
+      { name: 'Pinky (CH4)', data: rotatedFingers[4], color: '#8b5cf6' }
     ];
 
     return fingers.map(finger => ({
@@ -189,7 +292,7 @@ export default function HandVisualization3D({
         symbol: 'circle'
       }
     }));
-  }, [currentSample, baselines, sensorToAngle]);
+  }, [currentSample, baselines, sensorToAngle, quaternion, refQuat]);
 
   const title = prediction && confidence 
     ? `Prediction: ${prediction} | Conf: ${Math.round(confidence * 100)}%`
@@ -204,10 +307,45 @@ export default function HandVisualization3D({
         <h3 className="hand-viz-title" style={{ color: textPrimary }}>
           3D Hand Visualization
         </h3>
-        <div
-          className="hand-viz-status-dot"
-          style={{ backgroundColor: isActive ? '#10b981' : textSecondary }}
-        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {quaternion && (
+            <>
+              <span style={{
+                fontSize: '0.7rem',
+                fontWeight: 700,
+                padding: '2px 6px',
+                borderRadius: '4px',
+                background: 'rgba(99, 102, 241, 0.15)',
+                color: '#818cf8',
+                border: '1px solid rgba(99, 102, 241, 0.4)',
+                letterSpacing: '0.04em'
+              }}>
+                IMU
+              </span>
+              <button
+                onClick={handleSetReference}
+                title="Hold your hand palm-down (flat, parallel to the floor) then click to set reference pose"
+                style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  background: refQuat ? 'rgba(16,185,129,0.12)' : 'rgba(251,146,60,0.12)',
+                  color: refQuat ? '#34d399' : '#fb923c',
+                  border: `1px solid ${refQuat ? 'rgba(52,211,153,0.4)' : 'rgba(251,146,60,0.4)'}`,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {refQuat ? '📍 Re-calibrate' : '📍 Set Reference'}
+              </button>
+            </>
+          )}
+          <div
+            className="hand-viz-status-dot"
+            style={{ backgroundColor: isActive ? '#10b981' : textSecondary }}
+          />
+        </div>
       </div>
 
       <div className="hand-viz-plot">
@@ -220,27 +358,28 @@ export default function HandVisualization3D({
               scene: {
                 xaxis: { 
                   title: { text: 'X (Floor)' },
-                  range: [-2, 2.5],
+                  range: [-5, 5],
                   gridcolor: isDark ? '#374151' : '#e5e7eb',
                   zerolinecolor: isDark ? '#4b5563' : '#d1d5db',
                   autorange: false
                 },
                 yaxis: { 
                   title: { text: 'Y (Vertical)' },
-                  range: [-1, 3],
+                  range: [-3, 3],
                   gridcolor: isDark ? '#374151' : '#e5e7eb',
                   zerolinecolor: isDark ? '#4b5563' : '#d1d5db',
                   autorange: false
                 },
                 zaxis: { 
                   title: { text: 'Z (Floor)' },
-                  range: [-4, 1],
+                  range: [-3, 3],
                   gridcolor: isDark ? '#374151' : '#e5e7eb',
                   zerolinecolor: isDark ? '#4b5563' : '#d1d5db',
                   autorange: false
                 },
                 camera: {
-                  eye: { x: 1.5, y: 2, z: 0.5 },
+                  // Slightly above and in front — good viewpoint for a palm-down hand
+                  eye: { x: 1.2, y: 2.5, z: 2.5 },
                   up: { x: 0, y: 1, z: 0 }
                 },
                 bgcolor: isDark ? '#1e293b' : '#f9fafb',

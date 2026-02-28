@@ -408,10 +408,35 @@ fn start_reading_serial(
                                 continue;
                             }
                             
-                            // Parse: "2880,1910,2127,2295,2335"
+                            // Parse: "2880,1910,2127,2295,2335" (5 values, no IMU)
+                            //     or "2880,1910,2127,2295,2335,1.0000,0.0000,0.0000,0.0000" (9 values, with IMU)
                             let values: Vec<&str> = line.split(',').collect();
                             
-                            if values.len() == 5 {
+                            if values.len() == 9 {
+                                // New format: 5 thermistors + 4 quaternion floats (w, x, y, z)
+                                let thermistors: Vec<i32> = values[..5]
+                                    .iter()
+                                    .filter_map(|s| s.trim().parse::<i32>().ok())
+                                    .collect();
+                                let quats: Vec<f32> = values[5..]
+                                    .iter()
+                                    .filter_map(|s| s.trim().parse::<f32>().ok())
+                                    .collect();
+                                
+                                if thermistors.len() == 5 && quats.len() == 4 {
+                                    // Emit thermistor data (same event as before for backward compat)
+                                    let _ = window.emit("serial-data", &thermistors);
+                                    // Emit IMU quaternion as a separate event
+                                    let imu_payload = serde_json::json!({
+                                        "w": quats[0],
+                                        "x": quats[1],
+                                        "y": quats[2],
+                                        "z": quats[3]
+                                    });
+                                    let _ = window.emit("serial-imu", imu_payload);
+                                }
+                            } else if values.len() == 5 {
+                                // Legacy format: 5 thermistor values only
                                 let parsed: Vec<i32> = values
                                     .iter()
                                     .filter_map(|s| s.trim().parse::<i32>().ok())

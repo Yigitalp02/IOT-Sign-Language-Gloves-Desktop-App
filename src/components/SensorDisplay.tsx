@@ -35,8 +35,8 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
       const normalized = (value - baseline) / (maxbend - baseline);
       
       // Color thresholds based on bend percentage
-      if (normalized < 0.33) return '#10b981'; // Green - mostly straight
-      if (normalized < 0.66) return '#fbbf24'; // Yellow - partially bent
+      if (normalized < 0.45) return '#10b981'; // Green - mostly straight
+      if (normalized < 0.75) return '#fbbf24'; // Yellow - partially bent
       return '#ef4444'; // Red - mostly/fully bent
     }
     

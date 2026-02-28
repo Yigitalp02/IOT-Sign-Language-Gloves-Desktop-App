@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "./context/ThemeContext";
-import ConnectionManager from "./components/ConnectionManager";
+import ConnectionManager, { ImuData } from "./components/ConnectionManager";
 import Calibrator from "./components/Calibrator";
 import PredictionView from "./components/PredictionView";
 import SensorDisplay from "./components/SensorDisplay";
@@ -15,6 +15,11 @@ import "./App.css";
 // Based on actual sensor readings from the glove
 const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348]; // straight position (higher values)
 const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position (lower values)
+
+// Fallback calibration used when the user has never run the calibrator.
+// These match SimulatorControl and have a proper wide range per finger.
+const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
+const SIMULATOR_MAXBENDS  = [2200, 1300, 1480, 1640, 1720];
 
 // Removed unused interface PredictionRecord
 
@@ -44,6 +49,15 @@ function App() {
   
   // Real-time sensor display
   const [currentSample, setCurrentSample] = useState<number[] | null>(null);
+
+  // IMU quaternion (from BNO055, null when IMU not present)
+  const [currentImu, setCurrentImu] = useState<ImuData | null>(null);
+  const currentImuRef = useRef<ImuData | null>(null); // ref for use inside callbacks
+
+  const handleImuData = useCallback((data: ImuData) => {
+    currentImuRef.current = data;
+    setCurrentImu(data);
+  }, []);
   
   // Data log for debugging (stores last 100 samples)
   const [dataLog, setDataLog] = useState<string[]>([]);
@@ -198,13 +212,11 @@ function App() {
 
     // Always send normalized 0-1 values (both local model and cloud API now expect this)
 
-    // Simulator/Python script outputs match SimulatorControl's BASELINES/MAXBENDS; real glove uses user calibration
-    const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
-    const SIMULATOR_MAXBENDS = [2200, 1300, 1480, 1640, 1720];
-    // If serial connected but never calibrated (values still match defaults), treat as Python simulator
+    // Use SIMULATOR calibration when: (a) in simulator mode, or (b) glove connected but user
+    // never ran the calibrator (baselines still equal the narrow factory defaults).
     const useSerialSimulatorCal = connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
-    const calBaselines = isSimulating ? SIMULATOR_BASELINES : (useSerialSimulatorCal ? SIMULATOR_BASELINES : baselines);
-    const calMaxbends = isSimulating ? SIMULATOR_MAXBENDS : (useSerialSimulatorCal ? SIMULATOR_MAXBENDS : maxbends);
+    const calBaselines = (isSimulating || useSerialSimulatorCal) ? SIMULATOR_BASELINES : baselines;
+    const calMaxbends  = (isSimulating || useSerialSimulatorCal) ? SIMULATOR_MAXBENDS  : maxbends;
 
     const convertedSamples = samples.map(sample =>
       sample.map((value, fingerIndex) => {
@@ -329,7 +341,11 @@ function App() {
     setCurrentSample(data);
     
     // Add to data log (keep last 100 samples)
-    const logLine = data.join(',');
+    // Append IMU quaternion values if BNO055 is present
+    const imu = currentImuRef.current;
+    const logLine = imu
+      ? `${data.join(',')} | qw:${imu.w.toFixed(4)} qx:${imu.x.toFixed(4)} qy:${imu.y.toFixed(4)} qz:${imu.z.toFixed(4)}`
+      : data.join(',');
     dataLogRef.current = [...dataLogRef.current, logLine].slice(-100); // Keep last 100
     setDataLog(dataLogRef.current);
 
@@ -504,21 +520,21 @@ function App() {
     // CSV format: label,ch0,ch1,ch2,ch3,ch4 (NORMALIZED 0-1)
     let csvContent = 'label,ch0_norm,ch1_norm,ch2_norm,ch3_norm,ch4_norm\n';
     
+    // Use the same calibration selection as makePrediction so recorded data
+    // and prediction inputs are always normalized identically.
+    const useSimCal = baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
+    const expBaselines = useSimCal ? SIMULATOR_BASELINES : baselines;
+    const expMaxbends  = useSimCal ? SIMULATOR_MAXBENDS  : maxbends;
+
     allData.forEach(({ letter, samples }) => {
       samples.forEach(sample => {
-        // Normalize each sensor value to 0-1 range using current calibration
         const normalizedSample = sample.map((value, fingerIndex) => {
-          const baseline = baselines[fingerIndex];  // Higher value (straight)
-          const maxbend = maxbends[fingerIndex];    // Lower value (bent)
-          
-          // For thermistors: baseline > maxbend
-          // Normalized: 0 = straight (baseline), 1 = bent (maxbend)
+          const baseline = expBaselines[fingerIndex];
+          const maxbend  = expMaxbends[fingerIndex];
+          // Normalized: 0 = straight (baseline), 1 = fully bent (maxbend)
           const normalized = (baseline - value) / (baseline - maxbend);
-          const clamped = Math.max(0, Math.min(1, normalized));
-          
-          return clamped.toFixed(4); // Save with 4 decimal precision
+          return Math.max(0, Math.min(1, normalized)).toFixed(4);
         });
-        
         csvContent += `${letter},${normalizedSample.join(',')}\n`;
       });
     });
@@ -532,8 +548,9 @@ function App() {
     link.click();
     window.URL.revokeObjectURL(url);
 
+    const calLabel = useSimCal ? 'SIMULATOR (fallback)' : 'USER CALIBRATION';
     console.log(`[App] Exported ${allData.length} recordings to NORMALIZED CSV`);
-    console.log(`[App] Using calibration - Baselines: ${baselines}, Maxbends: ${maxbends}`);
+    console.log(`[App] Calibration used: ${calLabel} — Baselines: ${expBaselines}, Maxbends: ${expMaxbends}`);
     alert(`✅ Data exported as NORMALIZED values! ${allData.reduce((acc, r) => acc + r.samples.length, 0)} samples saved to CSV`);
   };
 
@@ -627,6 +644,7 @@ function App() {
         {/* Connection Manager */}
         <ConnectionManager 
           onSensorData={handleSensorData}
+          onImuData={handleImuData}
           onConnectionChange={(connected) => {
             setConnectedDevice(connected ? 'serial-device' : null);
             
@@ -635,6 +653,8 @@ function App() {
               console.log('[App] Connection lost - clearing all buffers and state');
               setSensorBuffer([]);
               setCurrentSample(null);
+              setCurrentImu(null);
+              currentImuRef.current = null;
               setDataLog([]);
               dataLogRef.current = [];
               realTimeBufferRef.current = []; // Clear real-time buffer
@@ -739,6 +759,7 @@ function App() {
             onTestSample={(sample) => setCurrentSample(sample)}
             baselines={calBaselines}
             maxbends={calMaxbends}
+            quaternion={currentImu}
           />
 
           {/* Right column: Sensor Display on top, Prediction View below */}

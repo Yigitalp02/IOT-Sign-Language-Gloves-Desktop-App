@@ -3,12 +3,20 @@ import { invoke } from "@tauri-apps/api/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 
+export interface ImuData {
+    w: number;
+    x: number;
+    y: number;
+    z: number;
+}
+
 interface ConnectionManagerProps {
     onSensorData?: (data: number[]) => void;
+    onImuData?: (data: ImuData) => void;
     onConnectionChange?: (connected: boolean) => void;
 }
 
-export default function ConnectionManager({ onSensorData, onConnectionChange }: ConnectionManagerProps) {
+export default function ConnectionManager({ onSensorData, onImuData, onConnectionChange }: ConnectionManagerProps) {
     const { t } = useTranslation();
     const [ports, setPorts] = useState<string[]>([]);
     const [selectedPort, setSelectedPort] = useState<string>("");
@@ -17,11 +25,15 @@ export default function ConnectionManager({ onSensorData, onConnectionChange }: 
     const [isScanning, setIsScanning] = useState(false);
     const [error, setError] = useState<string>("");
     
-    // Use ref to avoid re-registering event listener on every render
+    // Use refs to avoid re-registering event listeners on every render
     const onSensorDataRef = useRef(onSensorData);
+    const onImuDataRef = useRef(onImuData);
     useEffect(() => {
         onSensorDataRef.current = onSensorData;
     }, [onSensorData]);
+    useEffect(() => {
+        onImuDataRef.current = onImuData;
+    }, [onImuData]);
 
     const scanPorts = async () => {
         setIsScanning(true);
@@ -43,15 +55,23 @@ export default function ConnectionManager({ onSensorData, onConnectionChange }: 
     useEffect(() => {
         scanPorts();
         
-        // Listen for serial data events - use ref to avoid re-registering
-        const unlisten = listen<number[]>("serial-data", (event) => {
+        // Listen for thermistor data events
+        const unlistenSensor = listen<number[]>("serial-data", (event) => {
             if (onSensorDataRef.current) {
                 onSensorDataRef.current(event.payload);
             }
         });
+
+        // Listen for IMU quaternion events (only emitted when BNO055 is present)
+        const unlistenImu = listen<ImuData>("serial-imu", (event) => {
+            if (onImuDataRef.current) {
+                onImuDataRef.current(event.payload);
+            }
+        });
         
         return () => {
-            unlisten.then(f => f());
+            unlistenSensor.then(f => f());
+            unlistenImu.then(f => f());
         };
     }, []); // Empty deps - only register once
 
