@@ -1,15 +1,15 @@
 // src/components/HandVisualization3D.tsx
-import { useMemo, useCallback, useState, useRef, useEffect } from 'react';
-import Plot from 'react-plotly.js';
+// Uses Three.js + OrbitControls for 3D rendering.
+// The camera is owned entirely by OrbitControls and is NEVER touched by React
+// renders or data updates — finger geometry updates happen directly on the GPU
+// buffers without affecting the camera state.
+import { useCallback, useState, useRef, useEffect, useMemo } from 'react';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useTheme } from '../context/ThemeContext';
 import './HandVisualization3D.css';
 
-interface QuaternionData {
-  w: number;
-  x: number;
-  y: number;
-  z: number;
-}
+interface QuaternionData { w: number; x: number; y: number; z: number; }
 
 interface HandVisualization3DProps {
   currentSample: number[] | null;
@@ -22,158 +22,83 @@ interface HandVisualization3DProps {
   quaternion?: QuaternionData | null;
 }
 
-// Hand skeleton structure - rotated so palm faces away from viewer
-// Each finger has 4 points: palm origin (shared), knuckle, middle joint, tip
-// Coordinates: [X (left-right), Y (up-down), Z (toward/away from viewer)]
-  // X-Z plane is the floor, Y is vertical (up-down)
-// All fingers start at (0,0,0) and spread from there
 const HAND_SKELETON = {
-  // Thumb (CH0) - extends to the side
-  thumb: [
-    [0, -0.8, 0],       // SHARED palm origin
-    [0.9, 0.4, 0.1],      // thumb knuckle (extends to side)
-    [1.2, 1, 0.2],    // thumb middle joint
-    [1.35, 1.4, 0.3]      // thumb tip
-  ],
-  // Index (CH1) - points upward
-  index: [
-    [0, -0.8, 0],       // SHARED palm origin
-    [0.35, 0.8, 0],      // index knuckle (at palm edge)
-    [0.55, 1.5, 0],      // index middle joint
-    [0.65, 2.3, 0]       // index tip
-  ],
-  // Middle (CH2) - points upward
-  middle: [
-    [0, -0.8, 0],       // SHARED palm origin
-    [0, 0.8, -0.2],      // middle knuckle (at palm edge)
-    [0, 1.6, -0.2],      // middle middle joint
-    [0, 2.5, -0.2]       // middle tip
-  ],
-  // Ring (CH3) - points upward
-  ring: [
-    [0, -0.8, 0],       // SHARED palm origin
-    [-0.35, 0.8, 0],     // ring knuckle (at palm edge)
-    [-0.55, 1.55, 0],     // ring middle joint
-    [-0.65, 2.6, 0]      // ring tip
-  ],
-  // Pinky (CH4) - points upward
-  pinky: [
-    [0, -0.8, 0],       // SHARED palm origin
-    [-0.7, 0.7, 0.2],     // pinky knuckle (at palm edge)
-    [-0.9, 1.25, 0.2],     // pinky middle joint
-    [-1, 2, 0.2]      // pinky tip
-  ]
+  thumb:  [[0,-0.8,0],[0.9,0.4,0.1],[1.2,1,0.2],[1.35,1.4,0.3]],
+  index:  [[0,-0.8,0],[0.35,0.8,0],[0.55,1.5,0],[0.65,2.3,0]],
+  middle: [[0,-0.8,0],[0,0.8,-0.2],[0,1.6,-0.2],[0,2.5,-0.2]],
+  ring:   [[0,-0.8,0],[-0.35,0.8,0],[-0.55,1.55,0],[-0.65,2.6,0]],
+  pinky:  [[0,-0.8,0],[-0.7,0.7,0.2],[-0.9,1.25,0.2],[-1,2,0.2]],
 };
 
-// Default sensor calibration values (matches App.tsx)
-// These are fallback values - the actual calibration comes from props
-// Based on thermistor readings from properly worn glove
-const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348]; // straight position (higher values)
-const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position (lower values)
+const FINGER_COLORS = [0xef4444, 0xf59e0b, 0x10b981, 0x3b82f6, 0x8b5cf6];
+const FINGER_NAMES  = ['Thumb','Index','Middle','Ring','Pinky'];
 
-// Apply rotation to a point around Y-axis (finger bending)
+const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348];
+const DEFAULT_MAXBENDS  = [2832, 1922, 2105, 2279, 2323];
+
+// ── Pure math helpers (no React) ──────────────────────────────────────────────
 const rotatePoint = (point: number[], angle: number, pivot: number[]): number[] => {
   const rad = (angle * Math.PI) / 180;
-  const [x, y, z] = point;
-  const [px, py, pz] = pivot;
-  
-  // Translate to pivot
-  const tx = x - px;
-  const ty = y - py;
-  const tz = z - pz;
-  
-  // Rotate around X-axis (bending forward)
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  const ry = ty * cos - tz * sin;
-  const rz = ty * sin + tz * cos;
-  
-  // Translate back
-  return [tx + px, ry + py, rz + pz];
+  const [tx, ty, tz] = [point[0]-pivot[0], point[1]-pivot[1], point[2]-pivot[2]];
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  return [tx+pivot[0], ty*cos-tz*sin+pivot[1], ty*sin+tz*cos+pivot[2]];
 };
 
-// Quaternion multiply: a * b  (Hamilton product)
+const calculateBentFinger = (finger: number[][], bendAngle: number): number[][] => {
+  const r = finger.map(p => [...p]);
+  const amp = bendAngle * 1.5;
+  for (let i = 2; i < r.length; i++) r[i] = rotatePoint(r[i], amp*0.6, r[1]);
+  if (r.length > 3) r[3] = rotatePoint(r[3], amp*0.5, r[2]);
+  return r;
+};
+
 const quatMultiply = (a: QuaternionData, b: QuaternionData): QuaternionData => ({
   w: a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
   x: a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
   y: a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
   z: a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
 });
+const quatInverse = (q: QuaternionData): QuaternionData => ({ w:q.w, x:-q.x, y:-q.y, z:-q.z });
+const quaternionToMatrix = (w:number,x:number,y:number,z:number): number[][] => ([
+  [1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y)  ],
+  [2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x)  ],
+  [2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y)],
+]);
+const applyMatrix = (mat: number[][], p: number[]): number[] => ([
+  mat[0][0]*p[0]+mat[0][1]*p[1]+mat[0][2]*p[2],
+  mat[1][0]*p[0]+mat[1][1]*p[1]+mat[1][2]*p[2],
+  mat[2][0]*p[0]+mat[2][1]*p[1]+mat[2][2]*p[2],
+]);
 
-// Quaternion inverse (conjugate for unit quaternion)
-const quatInverse = (q: QuaternionData): QuaternionData => ({
-  w: q.w, x: -q.x, y: -q.y, z: -q.z,
-});
+const Q_TARGET: QuaternionData = { w: Math.SQRT1_2, x: Math.SQRT1_2, y: 0, z: 0 };
 
-// Convert a unit quaternion (w, x, y, z) to a 3×3 rotation matrix (row-major)
-const quaternionToMatrix = (w: number, x: number, y: number, z: number): number[][] => {
-  return [
-    [1 - 2*(y*y + z*z),   2*(x*y - w*z),     2*(x*z + w*y)  ],
-    [2*(x*y + w*z),        1 - 2*(x*x + z*z), 2*(y*z - w*x)  ],
-    [2*(x*z - w*y),        2*(y*z + w*x),     1 - 2*(x*x + y*y)]
-  ];
-};
-
-// Apply a 3×3 rotation matrix to a 3D point
-const applyMatrix = (mat: number[][], p: number[]): number[] => {
-  return [
-    mat[0][0]*p[0] + mat[0][1]*p[1] + mat[0][2]*p[2],
-    mat[1][0]*p[0] + mat[1][1]*p[1] + mat[1][2]*p[2],
-    mat[2][0]*p[0] + mat[2][1]*p[1] + mat[2][2]*p[2],
-  ];
-};
-
-// Calculate bent finger positions
-const calculateBentFinger = (finger: number[][], bendAngle: number): number[][] => {
-  const result = [...finger.map(p => [...p])]; // Deep copy
-  
-  // For more dramatic bending, amplify the angle
-  const amplifiedAngle = bendAngle * 1.5;
-  
-  // Distribute bend across the 2 actual joints (NOT the base segment from palm)
-  // Point 0: Palm (never moves)
-  // Point 1: Knuckle (never moves - it's anchored to palm)
-  // Point 2: Middle joint (rotates around knuckle)
-  // Point 3: Tip (rotates around knuckle AND middle joint)
-  
-  const knuckleBend = amplifiedAngle * 0.6;  // Bend at knuckle (point 1)
-  const middleJointBend = amplifiedAngle * 0.5; // Bend at middle joint (point 2)
-  
-  // DON'T rotate anything around point 0 (palm)!
-  // Point 0 and Point 1 stay fixed (the base segment from palm to knuckle)
-  
-  // Bend at knuckle (point 1) - affects points 2 and 3
-  for (let i = 2; i < result.length; i++) {
-    result[i] = rotatePoint(result[i], knuckleBend, result[1]);
-  }
-  
-  // Bend at middle joint (point 2) - affects point 3 only
-  if (result.length > 3) {
-    result[3] = rotatePoint(result[3], middleJointBend, result[2]);
-  }
-  
-  return result;
-};
-
-export default function HandVisualization3D({ 
-  currentSample, 
-  isActive, 
-  prediction, 
-  confidence,
+// ── Component ─────────────────────────────────────────────────────────────────
+export default function HandVisualization3D({
+  currentSample, isActive, prediction, confidence,
   onTestSample,
   baselines = DEFAULT_BASELINES,
-  maxbends = DEFAULT_MAXBENDS,
-  quaternion = null
+  maxbends  = DEFAULT_MAXBENDS,
+  quaternion = null,
 }: HandVisualization3DProps) {
   const { theme } = useTheme();
+  const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-  // Reference quaternion for relative-rotation mode.
-  // The hand rotates relative to this pose, so the 3D model starts in its
-  // default position and only shows movements relative to the calibration pose.
+  const canvasRef  = useRef<HTMLDivElement>(null);
+  const threeRef   = useRef<{
+    renderer: THREE.WebGLRenderer;
+    scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    controls: OrbitControls;
+    lines: THREE.Line[];
+    joints: THREE.Mesh[][];
+    rafId: number;
+    axisGroup: THREE.Group;
+  } | null>(null);
+
+  const [showAxes, setShowAxes] = useState(true);
   const [refQuat, setRefQuat] = useState<QuaternionData | null>(null);
   const refQuatRef = useRef<QuaternionData | null>(null);
 
-  // Auto-set reference on the very first IMU packet received
   useEffect(() => {
     if (quaternion && !refQuatRef.current) {
       refQuatRef.current = quaternion;
@@ -182,235 +107,389 @@ export default function HandVisualization3D({
   }, [quaternion]);
 
   const handleSetReference = useCallback(() => {
-    if (quaternion) {
-      refQuatRef.current = quaternion;
-      setRefQuat(quaternion);
-    }
+    if (quaternion) { refQuatRef.current = quaternion; setRefQuat(quaternion); }
   }, [quaternion]);
-  
-  // Determine if dark mode is active
-  const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-  // Get CSS color values
-  const bgCard = isDark ? '#1e293b' : '#ffffff';
-  const borderColor = isDark ? 'rgba(255, 255, 255, 0.1)' : '#d1d5db';
-  const textPrimary = isDark ? '#f1f5f9' : '#111827';
-  const textSecondary = isDark ? '#94a3b8' : '#6b7280';
+  // colours derived from theme
+  const bgColor   = isDark ? 0x1e293b : 0xf9fafb;
+  const gridColor = isDark ? 0x374151 : 0xe5e7eb;
 
-  // Map sensor value to bend angle using calibration values
-  const sensorToAngle = useCallback((value: number, fingerIndex: number): number => {
-    const baseline = baselines[fingerIndex];
-    const maxbend = maxbends[fingerIndex];
-    
-    // Normalize: 0 at baseline (straight), 1 at maxbend (fully bent)
-    const normalized = Math.max(0, Math.min(1, (value - baseline) / (maxbend - baseline)));
-    
-    // Convert to bend angle: 0° straight, 90° fully bent
-    return normalized * 90;
-  }, [baselines, maxbends]);
+  // ── Three.js init (runs once on mount) ────────────────────────────────────
+  useEffect(() => {
+    const container = canvasRef.current;
+    if (!container) return;
 
-  const plotData = useMemo(() => {
-    // Default hand position if no data yet - use baseline values (straight fingers)
-    const defaultSample = baselines; // Use calibration baselines
-    const sampleToUse = currentSample && currentSample.length >= 5 ? currentSample : defaultSample;
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setClearColor(bgColor);
+    container.appendChild(renderer.domElement);
 
-    // Calculate bend angles for each finger using per-finger calibration
-    const bendAngles = sampleToUse.map((value, index) => sensorToAngle(value, index));
+    // Scene & camera — match the old Plotly eye=(1.2,2.5,2.5) feel
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(55, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.position.set(3.5, 5.0, 6.5);
 
-    // Apply bending to each finger
-    const bentThumb = calculateBentFinger(HAND_SKELETON.thumb, bendAngles[0]);
-    const bentIndex = calculateBentFinger(HAND_SKELETON.index, bendAngles[1]);
-    const bentMiddle = calculateBentFinger(HAND_SKELETON.middle, bendAngles[2]);
-    const bentRing = calculateBentFinger(HAND_SKELETON.ring, bendAngles[3]);
-    const bentPinky = calculateBentFinger(HAND_SKELETON.pinky, bendAngles[4]);
+    // Orbit controls — these own the camera entirely
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0.1, 0.5, 0);
+    controls.update();
 
-    // Apply IMU quaternion rotation to all finger points (if BNO055 is available)
-    //
-    // Strategy:
-    //   1. q_rel   = inverse(refQuat) × q_current      — removes absolute sensor offset
-    //   2. q_viz   = remap axes (cyclic permutation)   — aligns BNO055 axes with viz axes
-    //   3. q_final = q_viz × Q_TARGET                  — Q_TARGET applied first (palm-down home),
-    //                                                     then q_viz on top in world frame
-    //
-    // BNO055 mounting (palm-down calibration pose):
-    //   BNO055 X  →  along fingers          →  viz  +Z
-    //   BNO055 Y  →  across hand width      →  viz  +X   ← wrist-ext axis (stop sign)
-    //   BNO055 Z  →  palm normal (upward)   →  viz  +Y
-    // Cyclic permutation: (bno_x, bno_y, bno_z) → (bno_y, bno_z, bno_x) = (viz_x, viz_y, viz_z)
-    //
-    // Q_TARGET = +90° around viz X:  puts default model into palm-down pose
-    //   • fingers +Y → +Z  (toward viewer, flat on floor plane)
-    //   • palm    +Z → −Y  (palm faces the floor ↓)
-    const Q_TARGET: QuaternionData = { w: Math.SQRT1_2, x: Math.SQRT1_2, y: 0, z: 0 };
+    // ── Axes + grid group (toggled by the Axes button) ─────────────────────
+    const axisGroup = new THREE.Group();
+    scene.add(axisGroup);
 
-    const allFingers = [bentThumb, bentIndex, bentMiddle, bentRing, bentPinky];
-    let rotatedFingers = allFingers;
+    // Floor grid — always visible, not part of the toggle group
+    const grid = new THREE.GridHelper(5, 5, gridColor, gridColor);
+    grid.position.y = -1.4;
+    scene.add(grid);
+
+    const FLOOR_Y = -1.4;
+    const LABEL_COLOR = '#8b9bb4';
+
+    // Helper: render text to a canvas sprite
+    const makeLabel = (text: string, scale = 0.9): THREE.Sprite => {
+      const cvs = document.createElement('canvas');
+      cvs.width = 512; cvs.height = 128;
+      const ctx = cvs.getContext('2d')!;
+      ctx.font = '600 56px system-ui,sans-serif';
+      ctx.fillStyle = LABEL_COLOR;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, 256, 64);
+      const tex = new THREE.CanvasTexture(cvs);
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+      const sp  = new THREE.Sprite(mat);
+      sp.scale.set(scale, scale * (128 / 512), 1);
+      return sp;
+    };
+
+    // Helper: draw an axis line into the group
+    const addAxisLine = (from: [number,number,number], to: [number,number,number], color: number) => {
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(...from), new THREE.Vector3(...to),
+      ]);
+      axisGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color })));
+    };
+
+    // X axis (red) — runs along the floor
+    addAxisLine([-2.5, FLOOR_Y, 0], [2.5, FLOOR_Y, 0], 0xef4444);
+    const xLabel = makeLabel('X (Floor)', 1.5);
+    xLabel.position.set(3.2, FLOOR_Y, 0);
+    axisGroup.add(xLabel);
+    [-2, -1, 0, 1, 2].forEach(v => {
+      const sp = makeLabel(String(v), 1.44);
+      sp.position.set(v, FLOOR_Y - 0.45, 0);
+      axisGroup.add(sp);
+    });
+
+    // Y axis (green) — vertical
+    addAxisLine([0, FLOOR_Y, 0], [0, 3.2, 0], 0x10b981);
+    const yLabel = makeLabel('Y (Vertical)', 1.5);
+    yLabel.position.set(-1.1, 3.6, 0);
+    axisGroup.add(yLabel);
+    [-1, 0, 1, 2, 3].forEach(v => {
+      const sp = makeLabel(String(v), 1.44);
+      sp.position.set(-0.75, v, 0);
+      axisGroup.add(sp);
+    });
+
+    // Z axis (blue) — runs along the floor
+    addAxisLine([0, FLOOR_Y, -2.5], [0, FLOOR_Y, 2.5], 0x3b82f6);
+    const zLabel = makeLabel('Z (Floor)', 1.5);
+    zLabel.position.set(0, FLOOR_Y, 3.2);
+    axisGroup.add(zLabel);
+    [-2, -1, 0, 1, 2].forEach(v => {
+      const sp = makeLabel(String(v), 1.44);
+      sp.position.set(0, FLOOR_Y - 0.45, v);
+      axisGroup.add(sp);
+    });
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+    dir.position.set(3, 6, 5);
+    scene.add(dir);
+
+    // Palm pad — flat cylinder so the finger bases look grounded
+    const palmGeo = new THREE.CylinderGeometry(0.85, 0.85, 0.06, 24);
+    const palmMat = new THREE.MeshPhongMaterial({ color: 0x64748b, opacity: 0.35, transparent: true });
+    const palm = new THREE.Mesh(palmGeo, palmMat);
+    palm.position.set(0.05, -0.62, 0.02);
+    scene.add(palm);
+
+    // Finger lines + joint spheres
+    const lines: THREE.Line[] = [];
+    const joints: THREE.Mesh[][] = [];
+    const skeletonArrays = [
+      HAND_SKELETON.thumb, HAND_SKELETON.index, HAND_SKELETON.middle,
+      HAND_SKELETON.ring,  HAND_SKELETON.pinky,
+    ];
+
+    // Map from sphere UUID → display info for the hover tooltip
+    const jointMeta = new Map<string, { finger: string; channel: number }>();
+
+    skeletonArrays.forEach((finger, fi) => {
+      const color = FINGER_COLORS[fi];
+
+      // Line (use tube for thickness since linewidth is ignored in WebGL)
+      const pts = finger.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+      const line = new THREE.Line(geo, mat);
+      scene.add(line);
+      lines.push(line);
+
+      // Joint spheres — larger at knuckle, smaller at tip
+      const fingerJoints: THREE.Mesh[] = [];
+      finger.forEach((p, pi) => {
+        const radius = pi === 0 ? 0.10 : pi === 1 ? 0.09 : 0.07;
+        const sphere = new THREE.Mesh(
+          new THREE.SphereGeometry(radius, 12, 12),
+          new THREE.MeshPhongMaterial({ color }),
+        );
+        sphere.position.set(p[0], p[1], p[2]);
+        scene.add(sphere);
+        fingerJoints.push(sphere);
+        jointMeta.set(sphere.uuid, { finger: FINGER_NAMES[fi], channel: fi });
+      });
+      joints.push(fingerJoints);
+    });
+
+    // ── Hover tooltip ──────────────────────────────────────────────────────────
+    container.style.position = 'relative';
+    const tooltip = document.createElement('div');
+    tooltip.style.cssText = [
+      'position:absolute',
+      'display:none',
+      'background:rgba(15,23,42,0.92)',
+      'border:1px solid rgba(255,255,255,0.14)',
+      'border-radius:7px',
+      'padding:7px 11px',
+      'font:500 13px/1.7 system-ui,sans-serif',
+      'color:#f1f5f9',
+      'pointer-events:none',
+      'z-index:50',
+      'white-space:nowrap',
+      'backdrop-filter:blur(6px)',
+    ].join(';');
+    container.appendChild(tooltip);
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.params.Line = { threshold: 0.05 };
+    const mouse = new THREE.Vector2();
+
+    const onMouseMove = (e: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      mouse.x =  ((e.clientX - rect.left)  / container.clientWidth)  * 2 - 1;
+      mouse.y = -((e.clientY - rect.top)   / container.clientHeight) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObjects(joints.flat());
+
+      if (hits.length > 0) {
+        const { object, point } = hits[0];
+        const meta = jointMeta.get(object.uuid);
+        if (meta) {
+          const color = `#${FINGER_COLORS[meta.channel].toString(16).padStart(6, '0')}`;
+          tooltip.innerHTML =
+            `x: ${point.x.toFixed(2)}<br>` +
+            `y: ${point.y.toFixed(2)}<br>` +
+            `z: ${point.z.toFixed(2)}<br>` +
+            `<span style="color:${color};font-weight:700">${meta.finger} (CH${meta.channel})</span>`;
+          tooltip.style.display = 'block';
+          // Keep tooltip inside the container bounds
+          const tx = Math.min(e.clientX - rect.left + 14, container.clientWidth - 160);
+          const ty = Math.max(e.clientY - rect.top  - 14, 4);
+          tooltip.style.left = tx + 'px';
+          tooltip.style.top  = ty + 'px';
+        }
+      } else {
+        tooltip.style.display = 'none';
+      }
+    };
+
+    const onMouseLeave = () => { tooltip.style.display = 'none'; };
+    renderer.domElement.addEventListener('mousemove', onMouseMove);
+    renderer.domElement.addEventListener('mouseleave', onMouseLeave);
+
+    // Render loop — OrbitControls.update() + renderer.render() only
+    const animate = () => {
+      const id = requestAnimationFrame(animate);
+      threeRef.current!.rafId = id;
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    const rafId = requestAnimationFrame(animate);
+
+    // Resize observer
+    const ro = new ResizeObserver(() => {
+      if (!container) return;
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    });
+    ro.observe(container);
+
+    threeRef.current = { renderer, scene, camera, controls, lines, joints, rafId, axisGroup };
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+      controls.dispose();
+      renderer.domElement.removeEventListener('mousemove', onMouseMove);
+      renderer.domElement.removeEventListener('mouseleave', onMouseLeave);
+      renderer.dispose();
+      if (container.contains(tooltip)) container.removeChild(tooltip);
+      if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
+      threeRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Update background/grid color on theme change ───────────────────────────
+  useEffect(() => {
+    if (!threeRef.current) return;
+    threeRef.current.renderer.setClearColor(bgColor);
+  }, [bgColor]);
+
+  // ── Toggle axes/grid visibility ────────────────────────────────────────────
+  useEffect(() => {
+    if (!threeRef.current) return;
+    threeRef.current.axisGroup.visible = showAxes;
+  }, [showAxes]);
+
+  // ── Compute finger positions ───────────────────────────────────────────────
+  const fingerPoints = useMemo(() => {
+    const sampleToUse = currentSample?.length === 5 ? currentSample : baselines;
+
+    const bendAngles = sampleToUse.map((v, i) => {
+      const n = Math.max(0, Math.min(1, (v - baselines[i]) / (maxbends[i] - baselines[i])));
+      return n * 90;
+    });
+
+    const skeletonArrays = [
+      HAND_SKELETON.thumb, HAND_SKELETON.index, HAND_SKELETON.middle,
+      HAND_SKELETON.ring,  HAND_SKELETON.pinky,
+    ];
+    let fingers = skeletonArrays.map((f, i) => calculateBentFinger(f, bendAngles[i]));
+
+    // Apply IMU rotation if available
     if (quaternion && refQuat) {
       const { w, x, y, z } = quaternion;
       const mag = Math.sqrt(w*w + x*x + y*y + z*z);
       if (mag > 0.9) {
-        // Normalise incoming quaternion
-        const qCurrent: QuaternionData = { w: w/mag, x: x/mag, y: y/mag, z: z/mag };
-        // Relative rotation in BNO055 sensor frame
-        const qRel = quatMultiply(quatInverse(refQuat), qCurrent);
-        // Remap BNO055 axes → visualization axes (cyclic permutation)
-        const qRelViz: QuaternionData = { w: qRel.w, x: qRel.y, y: qRel.z, z: qRel.x };
-        // q_final = q_viz × Q_TARGET
-        //   Q_TARGET first  → model into palm-down
-        //   q_viz after     → physical rotation applied in world frame on top
+        const qC: QuaternionData = { w:w/mag, x:x/mag, y:y/mag, z:z/mag };
+        const qRel = quatMultiply(quatInverse(refQuat), qC);
+        const qRelViz: QuaternionData = { w:qRel.w, x:qRel.y, y:qRel.z, z:qRel.x };
         const qFinal = quatMultiply(qRelViz, Q_TARGET);
-        const rotMat = quaternionToMatrix(qFinal.w, qFinal.x, qFinal.y, qFinal.z);
-        rotatedFingers = allFingers.map(finger =>
-          finger.map(point => applyMatrix(rotMat, point))
-        );
+        const mat = quaternionToMatrix(qFinal.w, qFinal.x, qFinal.y, qFinal.z);
+        fingers = fingers.map(f => f.map(p => applyMatrix(mat, p)));
       }
     }
 
-    // Create line traces for each finger
-    const fingers = [
-      { name: 'Thumb (CH0)', data: rotatedFingers[0], color: '#ef4444' },
-      { name: 'Index (CH1)', data: rotatedFingers[1], color: '#f59e0b' },
-      { name: 'Middle (CH2)', data: rotatedFingers[2], color: '#10b981' },
-      { name: 'Ring (CH3)', data: rotatedFingers[3], color: '#3b82f6' },
-      { name: 'Pinky (CH4)', data: rotatedFingers[4], color: '#8b5cf6' }
-    ];
+    return fingers;
+  }, [currentSample, baselines, maxbends, quaternion, refQuat]);
 
-    return fingers.map(finger => ({
-      type: 'scatter3d' as const,
-      mode: 'lines+markers' as const,
-      name: finger.name,
-      x: finger.data.map(p => p[0]),
-      y: finger.data.map(p => p[1]),
-      z: finger.data.map(p => p[2]),
-      line: {
-        color: finger.color,
-        width: 6
-      },
-      marker: {
-        size: 6,
-        color: finger.color,
-        symbol: 'circle'
-      }
-    }));
-  }, [currentSample, baselines, sensorToAngle, quaternion, refQuat]);
+  // ── Push new geometry to GPU — camera is never touched ────────────────────
+  useEffect(() => {
+    const t = threeRef.current;
+    if (!t) return;
 
-  const title = prediction && confidence 
-    ? `Prediction: ${prediction} | Conf: ${Math.round(confidence * 100)}%`
+    fingerPoints.forEach((finger, fi) => {
+      // Update line
+      const positions = t.lines[fi].geometry.attributes.position;
+      finger.forEach((p, pi) => {
+        positions.setXYZ(pi, p[0], p[1], p[2]);
+      });
+      positions.needsUpdate = true;
+      t.lines[fi].geometry.computeBoundingSphere();
+
+      // Update joints
+      finger.forEach((p, pi) => {
+        t.joints[fi][pi].position.set(p[0], p[1], p[2]);
+      });
+    });
+  }, [fingerPoints]);
+
+  const bgCard     = isDark ? 'rgba(30,41,59,0.7)' : '#ffffff';
+  const borderColor = isDark ? 'rgba(255,255,255,0.1)' : '#d1d5db';
+  const textPrimary = isDark ? '#f1f5f9' : '#111827';
+  const textSecondary = isDark ? '#94a3b8' : '#6b7280';
+
+  const title = prediction && confidence
+    ? `${prediction}  ${Math.round(confidence * 100)}%`
     : isActive ? 'Real-Time Hand Pose' : 'Waiting for data...';
 
   return (
-    <div className="hand-viz-container" style={{ 
-      backgroundColor: bgCard, 
-      borderColor: borderColor 
-    }}>
+    <div className="hand-viz-container" style={{ backgroundColor: bgCard, borderColor }}>
       <div className="hand-viz-header">
-        <h3 className="hand-viz-title" style={{ color: textPrimary }}>
-          3D Hand Visualization
-        </h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {quaternion && (
-            <>
-              <span style={{
-                fontSize: '0.7rem',
-                fontWeight: 700,
-                padding: '2px 6px',
-                borderRadius: '4px',
-                background: 'rgba(99, 102, 241, 0.15)',
-                color: '#818cf8',
-                border: '1px solid rgba(99, 102, 241, 0.4)',
-                letterSpacing: '0.04em'
-              }}>
-                IMU
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <div>
+            <h3 className="hand-viz-title" style={{ color: textPrimary, margin: 0 }}>
+              3D Hand Visualization
+            </h3>
+            {prediction && confidence ? (
+              <span style={{ fontSize: '0.82rem', color: '#ffffff', fontWeight: 500 }}>
+                Prediction: <strong style={{ color: '#f1f5f9' }}>{prediction}</strong>
+                <span style={{ color: isDark ? '#475569' : '#d1d5db', margin: '0 6px' }}>|</span>
+                Confidence: <strong style={{ color: '#f1f5f9' }}>{Math.round(confidence * 100)}%</strong>
               </span>
-              <button
-                onClick={handleSetReference}
-                title="Hold your hand palm-down (flat, parallel to the floor) then click to set reference pose"
-                style={{
-                  fontSize: '0.7rem',
-                  fontWeight: 600,
-                  padding: '2px 7px',
-                  borderRadius: '4px',
-                  background: refQuat ? 'rgba(16,185,129,0.12)' : 'rgba(251,146,60,0.12)',
-                  color: refQuat ? '#34d399' : '#fb923c',
-                  border: `1px solid ${refQuat ? 'rgba(52,211,153,0.4)' : 'rgba(251,146,60,0.4)'}`,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                {refQuat ? '📍 Re-calibrate' : '📍 Set Reference'}
-              </button>
-            </>
-          )}
-          <div
-            className="hand-viz-status-dot"
-            style={{ backgroundColor: isActive ? '#10b981' : textSecondary }}
-          />
+            ) : (
+              <span style={{ fontSize: '0.8rem', color: textSecondary }}>{title}</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {/* Axes toggle */}
+            <button
+              onClick={() => setShowAxes(v => !v)}
+              title={showAxes ? 'Hide axes & grid' : 'Show axes & grid'}
+              style={{ fontSize:'0.7rem', fontWeight:600, padding:'2px 7px', borderRadius:'4px', cursor:'pointer', whiteSpace:'nowrap',
+                background: showAxes ? 'rgba(99,102,241,0.15)' : 'rgba(100,116,139,0.12)',
+                color:      showAxes ? '#818cf8'               : '#94a3b8',
+                border:     `1px solid ${showAxes ? 'rgba(99,102,241,0.4)' : 'rgba(100,116,139,0.3)'}`,
+              }}>
+              {showAxes ? '📐 Axes On' : '📐 Axes Off'}
+            </button>
+            {quaternion && (
+              <>
+                <span style={{ fontSize:'0.7rem', fontWeight:700, padding:'2px 6px', borderRadius:'4px', background:'rgba(99,102,241,0.15)', color:'#818cf8', border:'1px solid rgba(99,102,241,0.4)', letterSpacing:'0.04em' }}>IMU</span>
+                <button onClick={handleSetReference} title="Hold hand palm-down then click"
+                  style={{ fontSize:'0.7rem', fontWeight:600, padding:'2px 7px', borderRadius:'4px', background: refQuat ? 'rgba(16,185,129,0.12)' : 'rgba(251,146,60,0.12)', color: refQuat ? '#34d399' : '#fb923c', border:`1px solid ${refQuat ? 'rgba(52,211,153,0.4)' : 'rgba(251,146,60,0.4)'}`, cursor:'pointer', whiteSpace:'nowrap' }}>
+                  {refQuat ? '📍 Re-calibrate' : '📍 Set Reference'}
+                </button>
+              </>
+            )}
+            <div className="hand-viz-status-dot" style={{ backgroundColor: isActive ? '#10b981' : textSecondary }} />
+          </div>
         </div>
       </div>
 
-      <div className="hand-viz-plot">
-        <Plot
-          data={plotData}
-          layout={
-            {
-              title: { text: title },
-              uirevision: 'true',
-              scene: {
-                xaxis: { 
-                  title: { text: 'X (Floor)' },
-                  range: [-5, 5],
-                  gridcolor: isDark ? '#374151' : '#e5e7eb',
-                  zerolinecolor: isDark ? '#4b5563' : '#d1d5db',
-                  autorange: false
-                },
-                yaxis: { 
-                  title: { text: 'Y (Vertical)' },
-                  range: [-3, 3],
-                  gridcolor: isDark ? '#374151' : '#e5e7eb',
-                  zerolinecolor: isDark ? '#4b5563' : '#d1d5db',
-                  autorange: false
-                },
-                zaxis: { 
-                  title: { text: 'Z (Floor)' },
-                  range: [-3, 3],
-                  gridcolor: isDark ? '#374151' : '#e5e7eb',
-                  zerolinecolor: isDark ? '#4b5563' : '#d1d5db',
-                  autorange: false
-                },
-                camera: {
-                  // Slightly above and in front — good viewpoint for a palm-down hand
-                  eye: { x: 1.2, y: 2.5, z: 2.5 },
-                  up: { x: 0, y: 1, z: 0 }
-                },
-                bgcolor: isDark ? '#1e293b' : '#f9fafb',
-                dragmode: 'orbit',
-                aspectmode: 'manual',
-                aspectratio: { x: 1, y: 1, z: 1 }
-              },
-              paper_bgcolor: bgCard,
-              plot_bgcolor: bgCard,
-              showlegend: true,
-              legend: {
-                font: {
-                  color: textSecondary,
-                  size: 11
-                },
-                bgcolor: isDark ? 'rgba(30, 41, 59, 0.8)' : 'rgba(249, 250, 251, 0.8)',
-                bordercolor: borderColor,
-                borderwidth: 1
-              },
-              margin: { l: 0, r: 0, t: 40, b: 0 },
-              autosize: true
-            } as any
-          }
-          config={{
-            displayModeBar: true,
-            displaylogo: false,
-            modeBarButtonsToRemove: ['toImage', 'sendDataToCloud'],
-            responsive: true
-          }}
-          style={{ width: '100%', height: '400px' }}
-        />
+      {/* Three.js canvas + floating legend overlay */}
+      <div className="hand-viz-plot" style={{ position: 'relative' }}>
+        <div ref={canvasRef} style={{ width: '100%', height: '400px' }} />
+
+        {/* Finger legend — floats top-right inside the canvas, like the old Plotly version */}
+        <div style={{
+          position: 'absolute', top: 12, right: 12,
+          background: isDark ? 'rgba(15,23,42,0.75)' : 'rgba(255,255,255,0.82)',
+          border: `1px solid ${borderColor}`,
+          borderRadius: 8, padding: '8px 12px',
+          display: 'flex', flexDirection: 'column', gap: 5,
+          backdropFilter: 'blur(6px)',
+          pointerEvents: 'none',
+        }}>
+          {FINGER_NAMES.map((name, i) => (
+            <span key={name} style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 7 }}>
+              {/* colour swatch that matches Plotly's thick line appearance */}
+              <span style={{ width: 18, height: 4, borderRadius: 2, background: `#${FINGER_COLORS[i].toString(16).padStart(6,'0')}`, display: 'inline-block', flexShrink: 0 }} />
+              <span style={{ color: textSecondary }}>{name} (CH{i})</span>
+            </span>
+          ))}
+        </div>
       </div>
 
       {!isActive && (
@@ -419,40 +498,12 @@ export default function HandVisualization3D({
         </p>
       )}
 
-      {/* Test pose buttons */}
       {onTestSample && (
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => onTestSample([2700, 1650, 1850, 2110, 2125])} // BASELINES - straight
-            style={{
-              padding: '0.5rem 1rem',
-              borderRadius: '6px',
-              border: '1px solid ' + borderColor,
-              background: bgCard,
-              color: textPrimary,
-              fontSize: '0.875rem',
-              cursor: 'pointer'
-            }}
-          >
-            🖐️ Straight
-          </button>
-          <button
-            onClick={() => onTestSample([2200, 1300, 1480, 1640, 1720])} // MAXBENDS - fully bent
-            style={{
-              padding: '0.5rem 1rem',
-              borderRadius: '6px',
-              border: '1px solid ' + borderColor,
-              background: bgCard,
-              color: textPrimary,
-              fontSize: '0.875rem',
-              cursor: 'pointer'
-            }}
-          >
-            ✊ Bent
-          </button>
+        <div style={{ display:'flex', gap:'0.5rem', marginTop:'0.75rem', justifyContent:'center', flexWrap:'wrap' }}>
+          <button onClick={() => onTestSample([2700,1650,1850,2110,2125])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>🖐️ Straight</button>
+          <button onClick={() => onTestSample([2200,1300,1480,1640,1720])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>✊ Bent</button>
         </div>
       )}
     </div>
   );
 }
-
