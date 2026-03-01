@@ -352,11 +352,15 @@ function App() {
     // If recording for data collection, add sample to recording buffer
     if (isRecording) {
       setRecordedSamples(prev => {
-        const newSamples = [...prev, data];
-        // Auto-stop at 150 samples (3 seconds) - using ref to avoid dependency issues
+        // Attach the current IMU quaternion snapshot (if BNO055 is present).
+        // Falls back to identity quaternion so the CSV always has 9 columns.
+        const imuSnap = currentImuRef.current;
+        const fullSample = imuSnap
+          ? [...data, imuSnap.w, imuSnap.x, imuSnap.y, imuSnap.z]
+          : [...data, 1.0, 0.0, 0.0, 0.0];
+        const newSamples = [...prev, fullSample];
         if (newSamples.length >= 150 && isRecording) {
           console.log('[App] Recording complete - 150 samples collected');
-          // Will trigger useEffect to stop recording
         }
         return newSamples;
       });
@@ -517,9 +521,11 @@ function App() {
       .replace(/:/g, '-')
       .slice(0, 19); // YYYY-MM-DD-HH-MM-SS
 
-    // CSV format: label,ch0,ch1,ch2,ch3,ch4 (NORMALIZED 0-1)
-    let csvContent = 'label,ch0_norm,ch1_norm,ch2_norm,ch3_norm,ch4_norm\n';
-    
+    // CSV format: label, 5 normalised flex values, 4 raw quaternion values (w,x,y,z)
+    // The quaternion is the raw BNO055 output — no normalisation needed (already unit vector).
+    // If the BNO055 was not connected during a recording, columns default to identity (1,0,0,0).
+    let csvContent = 'label,ch0_norm,ch1_norm,ch2_norm,ch3_norm,ch4_norm,qw,qx,qy,qz\n';
+
     // Use the same calibration selection as makePrediction so recorded data
     // and prediction inputs are always normalized identically.
     const useSimCal = baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
@@ -528,14 +534,18 @@ function App() {
 
     allData.forEach(({ letter, samples }) => {
       samples.forEach(sample => {
-        const normalizedSample = sample.map((value, fingerIndex) => {
+        // First 5 values: flex sensors (normalize to 0-1)
+        const normalizedFlex = sample.slice(0, 5).map((value, fingerIndex) => {
           const baseline = expBaselines[fingerIndex];
           const maxbend  = expMaxbends[fingerIndex];
-          // Normalized: 0 = straight (baseline), 1 = fully bent (maxbend)
           const normalized = (baseline - value) / (baseline - maxbend);
           return Math.max(0, Math.min(1, normalized)).toFixed(4);
         });
-        csvContent += `${letter},${normalizedSample.join(',')}\n`;
+        // Values 5-8: quaternion (w, x, y, z) — keep as-is, 4 decimal places
+        const imuValues = sample.length >= 9
+          ? sample.slice(5, 9).map(v => v.toFixed(4))
+          : ['1.0000', '0.0000', '0.0000', '0.0000']; // identity fallback
+        csvContent += `${letter},${normalizedFlex.join(',')},${imuValues.join(',')}\n`;
       });
     });
 
