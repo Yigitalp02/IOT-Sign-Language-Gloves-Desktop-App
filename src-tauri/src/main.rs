@@ -3,9 +3,181 @@
 
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::thread;
 use serialport::SerialPort;
+
+// ── Unity Named Pipe ──────────────────────────────────────────────────────────
+// Sends 8 f32 values (32 bytes, little-endian) per frame to Unity:
+//   [0..4]  5 flex sensors, already normalized 0-1
+//   [5..7]  IMU as Euler angles in degrees (pitch, yaw, roll)
+
+#[cfg(target_os = "windows")]
+use winapi::{
+    um::{
+        fileapi::WriteFile,
+        handleapi::CloseHandle,
+        namedpipeapi::{ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe},
+        winbase::{
+            PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES,
+        },
+    },
+    shared::{
+        minwindef::DWORD,
+        ntdef::HANDLE,
+        winerror::ERROR_PIPE_CONNECTED,
+    },
+};
+#[cfg(target_os = "windows")]
+use winapi::um::errhandlingapi::GetLastError;
+#[cfg(target_os = "windows")]
+const INVALID_HANDLE_VALUE: HANDLE = !0usize as HANDLE;
+
+struct UnityPipeState {
+    sender:       Option<std::sync::mpsc::SyncSender<[f32; 8]>>,
+    is_connected: bool,
+    is_running:   bool,
+}
+
+impl UnityPipeState {
+    fn new() -> Self {
+        Self { sender: None, is_connected: false, is_running: false }
+    }
+}
+
+type UnityPipeShared = Arc<Mutex<UnityPipeState>>;
+
+#[cfg(target_os = "windows")]
+fn run_pipe_thread(
+    pipe_name:  String,
+    receiver:   std::sync::mpsc::Receiver<[f32; 8]>,
+    shared:     UnityPipeShared,
+) {
+    use std::sync::mpsc::RecvTimeoutError;
+
+    loop {
+        // Exit if stopped
+        { let s = shared.lock().unwrap(); if !s.is_running { break; } }
+
+        // Create the server-end of the named pipe (outbound, 1 instance)
+        let wide: Vec<u16> = format!("\\\\.\\pipe\\{}\0", pipe_name).encode_utf16().collect();
+
+        let handle: HANDLE = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_OUTBOUND,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                PIPE_UNLIMITED_INSTANCES,
+                256 as DWORD,
+                0   as DWORD,
+                0   as DWORD,
+                core::ptr::null_mut(),
+            )
+        };
+
+        if handle == INVALID_HANDLE_VALUE {
+            eprintln!("[pipe] CreateNamedPipeW failed");
+            thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+
+        println!("[pipe] Waiting for Unity to connect to \"{}\"…", pipe_name);
+
+        // Blocking wait for Unity client
+        let ok = unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) };
+        if ok == 0 {
+            let err = unsafe { GetLastError() };
+            if err != ERROR_PIPE_CONNECTED {
+                unsafe { CloseHandle(handle); }
+                thread::sleep(Duration::from_millis(500));
+                continue;
+            }
+        }
+
+        println!("[pipe] Unity connected!");
+        { let mut s = shared.lock().unwrap(); s.is_connected = true; }
+
+        // Write loop — drain the channel and forward to Unity
+        loop {
+            { let s = shared.lock().unwrap(); if !s.is_running { unsafe { DisconnectNamedPipe(handle); CloseHandle(handle); } return; } }
+
+            match receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(data) => {
+                    let bytes: Vec<u8> = data.iter().flat_map(|f| f.to_le_bytes()).collect();
+                    let mut written: u32 = 0;
+                    let result = unsafe {
+                        WriteFile(handle, bytes.as_ptr() as *const _, bytes.len() as u32, &mut written, std::ptr::null_mut())
+                    };
+                    if result == 0 { break; }   // Unity disconnected
+                }
+                Err(RecvTimeoutError::Timeout)      => continue,
+                Err(RecvTimeoutError::Disconnected) => { break; }
+            }
+        }
+
+        println!("[pipe] Unity disconnected — waiting for reconnect…");
+        unsafe { DisconnectNamedPipe(handle); CloseHandle(handle); }
+        { let mut s = shared.lock().unwrap(); s.is_connected = false; if !s.is_running { break; } }
+        thread::sleep(Duration::from_millis(300));
+    }
+
+    println!("[pipe] Server stopped.");
+}
+
+#[tauri::command]
+fn unity_pipe_start(
+    pipe_name: Option<String>,
+    state: tauri::State<UnityPipeShared>,
+) -> Result<String, String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    if s.is_running { return Ok("already running".to_string()); }
+
+    let name = pipe_name.unwrap_or_else(|| "glove_pipe".to_string());
+    let (tx, rx) = std::sync::mpsc::sync_channel::<[f32; 8]>(4);
+    s.sender     = Some(tx);
+    s.is_running = true;
+    drop(s);
+
+    let shared_clone = state.inner().clone();
+    #[cfg(target_os = "windows")]
+    thread::spawn(move || run_pipe_thread(name, rx, shared_clone));
+
+    #[cfg(not(target_os = "windows"))]
+    drop((rx, shared_clone));
+
+    Ok("pipe server started".to_string())
+}
+
+#[tauri::command]
+fn unity_pipe_stop(state: tauri::State<UnityPipeShared>) -> Result<String, String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    s.sender     = None;    // drops channel → thread exits write loop
+    s.is_running = false;
+    s.is_connected = false;
+    Ok("pipe server stopped".to_string())
+}
+
+#[tauri::command]
+fn unity_pipe_send(
+    data: Vec<f32>,
+    state: tauri::State<UnityPipeShared>,
+) -> Result<(), String> {
+    if data.len() < 8 { return Err("need 8 floats".to_string()); }
+    let arr: [f32; 8] = data[..8].try_into().map_err(|e: std::array::TryFromSliceError| e.to_string())?;
+    let s = state.lock().map_err(|e| e.to_string())?;
+    if let Some(tx) = &s.sender {
+        let _ = tx.try_send(arr); // non-blocking; drop frame if channel full
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn unity_pipe_status(state: tauri::State<UnityPipeShared>) -> serde_json::Value {
+    let s = state.lock().unwrap();
+    serde_json::json!({ "running": s.is_running, "connected": s.is_connected })
+}
 
 /// Text-to-Speech command that uses OS-native TTS engines
 /// 
@@ -464,13 +636,182 @@ fn start_reading_serial(
     Ok(())
 }
 
+/// Launch the Unity digital-twin executable.
+/// `exe_path` should be the absolute path to the built .exe, e.g.
+///   "C:\\Users\\Yigit\\Desktop\\iot-sign-language-desktop\\unity-handvis\\Build\\unity-handvis.exe"
+/// If the path is empty or omitted, we try the default location next to this app.
+#[tauri::command]
+fn launch_unity(exe_path: Option<String>) -> Result<(), String> {
+    let path = exe_path.unwrap_or_else(|| {
+        // Default: Build/ folder sitting beside the project
+        let mut p = std::env::current_exe()
+            .unwrap_or_default()
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
+        p.push("unity-handvis.exe");
+        p.to_string_lossy().to_string()
+    });
+
+    Command::new(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to launch Unity viewer: {e}  (path: {path})"))
+}
+
+// ── WebGL HTTP file-server ─────────────────────────────────────────────────────
+// Serves the Unity WebGL build directory over HTTP so that the Tauri WebView
+// can embed it in an <iframe>.  The iframe receives sensor data via postMessage.
+
+struct WebGLServerState {
+    stop_flag: Option<Arc<AtomicBool>>,
+    port: u16,
+}
+impl WebGLServerState {
+    fn new() -> Self { Self { stop_flag: None, port: 8787 } }
+}
+type WebGLServerShared = Arc<Mutex<WebGLServerState>>;
+
+/// Return the Content-Type for a file, stripping any trailing .br/.gz extension first.
+fn mime_for(path: &std::path::Path) -> &'static str {
+    // Peel off .br / .gz to get the real extension
+    let effective = match path.extension().and_then(|e| e.to_str()) {
+        Some("br") | Some("gz") => std::path::Path::new(path.file_stem().unwrap_or_default()),
+        _ => path,
+    };
+    match effective.extension().and_then(|e| e.to_str()) {
+        Some("html")         => "text/html; charset=utf-8",
+        Some("js")           => "application/javascript",
+        Some("wasm")         => "application/wasm",
+        Some("data")         => "application/octet-stream",
+        Some("json")         => "application/json",
+        Some("css")          => "text/css",
+        Some("png")          => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("svg")          => "image/svg+xml",
+        Some("ico")          => "image/x-icon",
+        _                    => "application/octet-stream",
+    }
+}
+
+fn handle_webgl_request(request: tiny_http::Request, dir: &std::path::Path) {
+    let raw_url = request.url().to_string();
+    // Strip query string, map "/" → "index.html"
+    let path_part = raw_url.split('?').next().unwrap_or("/");
+    let path_part = if path_part == "/" { "index.html" } else { path_part.trim_start_matches('/') };
+
+    let file_path = dir.join(path_part);
+
+    // Unity WebGL builds may request .br / .gz files directly OR expect the server
+    // to transparently serve compressed variants of uncompressed URLs.
+    // Strategy:
+    //   1. If the requested file exists on disk → serve it as-is.
+    //   2. Otherwise try adding .br / .gz suffixes.
+    // In all cases, detect encoding from the final file's extension so the browser
+    // can decompress it correctly.
+    let serve_path = if file_path.exists() {
+        file_path.clone()
+    } else {
+        let br_path = dir.join(format!("{}.br", path_part));
+        let gz_path = dir.join(format!("{}.gz", path_part));
+        if br_path.exists()      { br_path }
+        else if gz_path.exists() { gz_path }
+        else                     { file_path.clone() } // will 404 below
+    };
+
+    // Derive Content-Encoding from whatever file we ended up selecting
+    let encoding: Option<&str> = match serve_path.extension().and_then(|e| e.to_str()) {
+        Some("br") => Some("br"),
+        Some("gz") => Some("gzip"),
+        _          => None,
+    };
+
+    let mime = mime_for(&serve_path); // strips .br/.gz internally to get the real type
+    let cors = tiny_http::Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap();
+    let ct   = tiny_http::Header::from_bytes("Content-Type", mime).unwrap();
+
+    match std::fs::read(&serve_path) {
+        Ok(data) => {
+            let mut resp = tiny_http::Response::from_data(data)
+                .with_header(ct)
+                .with_header(cors);
+            if let Some(enc) = encoding {
+                resp = resp.with_header(
+                    tiny_http::Header::from_bytes("Content-Encoding", enc).unwrap()
+                );
+            }
+            let _ = request.respond(resp);
+        }
+        Err(_) => {
+            let resp = tiny_http::Response::from_string("404 Not Found")
+                .with_status_code(tiny_http::StatusCode(404));
+            let _ = request.respond(resp);
+        }
+    }
+}
+
+/// Start a local HTTP server that serves the Unity WebGL build directory.
+/// `dir`  – absolute path to the WebGL build folder (contains index.html)
+/// `port` – local port, default 8787
+/// Returns the actual port used so the frontend can build the iframe URL.
+#[tauri::command]
+fn start_webgl_server(
+    dir: String,
+    port: u16,
+    state: tauri::State<WebGLServerShared>,
+) -> Result<u16, String> {
+    let mut s = state.lock().unwrap();
+
+    // Tear down any existing server
+    if let Some(flag) = s.stop_flag.take() {
+        flag.store(true, Ordering::Relaxed);
+    }
+
+    let server = tiny_http::Server::http(format!("0.0.0.0:{}", port))
+        .map_err(|e| format!("Cannot bind WebGL HTTP server on port {port}: {e}"))?;
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    s.stop_flag = Some(stop_flag.clone());
+    s.port = port;
+
+    let dir_path = std::path::PathBuf::from(dir);
+    thread::spawn(move || {
+        loop {
+            if stop_flag.load(Ordering::Relaxed) { break; }
+            match server.recv_timeout(Duration::from_millis(300)) {
+                Ok(Some(req)) => handle_webgl_request(req, &dir_path),
+                Ok(None)      => {}   // timeout – loop and check stop flag
+                Err(_)        => break,
+            }
+        }
+    });
+
+    Ok(port)
+}
+
+/// Stop the WebGL HTTP server.
+#[tauri::command]
+fn stop_webgl_server(state: tauri::State<WebGLServerShared>) -> Result<(), String> {
+    let mut s = state.lock().unwrap();
+    if let Some(flag) = s.stop_flag.take() {
+        flag.store(true, Ordering::Relaxed);
+        Ok(())
+    } else {
+        Err("WebGL server is not running".to_string())
+    }
+}
+
 fn main() {
     let serial_state: SerialPortState = Arc::new(Mutex::new(None));
     let reading_active: ReadingActiveState = Arc::new(Mutex::new(false));
-    
+    let unity_pipe: UnityPipeShared = Arc::new(Mutex::new(UnityPipeState::new()));
+    let webgl_server: WebGLServerShared = Arc::new(Mutex::new(WebGLServerState::new()));
+
     tauri::Builder::default()
         .manage(serial_state)
         .manage(reading_active)
+        .manage(unity_pipe)
+        .manage(webgl_server)
         .invoke_handler(tauri::generate_handler![
             tts_say,
             list_ports,
@@ -478,7 +819,14 @@ fn main() {
             disconnect_serial,
             start_reading_serial,
             stop_reading_serial,
-            resume_reading_serial
+            resume_reading_serial,
+            unity_pipe_start,
+            unity_pipe_stop,
+            unity_pipe_send,
+            unity_pipe_status,
+            launch_unity,
+            start_webgl_server,
+            stop_webgl_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

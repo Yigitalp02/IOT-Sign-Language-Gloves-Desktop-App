@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/tauri";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "./context/ThemeContext";
 import ConnectionManager, { ImuData } from "./components/ConnectionManager";
@@ -16,6 +17,16 @@ import "./App.css";
 const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348]; // straight position (higher values)
 const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position (lower values)
 
+// ── Quaternion helpers (mirrors HandVisualization3D math) ─────────────────────
+// Used to apply the same IMU transformation chain before forwarding to Unity.
+type Quat = { w: number; x: number; y: number; z: number };
+const qMult = (a: Quat, b: Quat): Quat => ({
+  w: a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
+  x: a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+  y: a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+  z: a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
+});
+const qInv  = (q: Quat): Quat => ({ w: q.w, x: -q.x, y: -q.y, z: -q.z });
 // Fallback calibration used when the user has never run the calibrator.
 // These match SimulatorControl and have a proper wide range per finger.
 const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
@@ -58,6 +69,34 @@ function App() {
     currentImuRef.current = data;
     setCurrentImu(data);
   }, []);
+
+  // Unity Named Pipe state
+  const [unityPipeEnabled, setUnityPipeEnabled] = useState(false);
+  const [unityConnected,   setUnityConnected]   = useState(false);
+  const unityPipeEnabledRef = useRef(false);
+  // Reference quaternion captured from the first IMU sample each Unity session.
+  // Mirrors HandVisualization3D's refQuat so both show the same relative orientation.
+  const unityRefQuatRef = useRef<Quat | null>(null);
+
+  // WebGL twin (embedded iframe)
+  const [webglEnabled,       setWebglEnabled]       = useState(false);
+  const [webglServerRunning, setWebglServerRunning] = useState(false);
+  const webglEnabledRef = useRef(false);
+  const webglIframeRef  = useRef<HTMLIFrameElement>(null);
+  const WEBGL_PORT = 8787;
+  const WEBGL_DIR  = 'C:\\Users\\Yigit\\Desktop\\iot-sign-language-desktop\\unity-handvis\\WebGLBuild';
+
+  // Poll pipe connection status while enabled
+  useEffect(() => {
+    if (!unityPipeEnabled) return;
+    const id = setInterval(async () => {
+      try {
+        const s = await invoke<{ running: boolean; connected: boolean }>('unity_pipe_status');
+        setUnityConnected(s.connected);
+      } catch { /* ignore */ }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [unityPipeEnabled]);
   
   // Data log for debugging (stores last 100 samples)
   const [dataLog, setDataLog] = useState<string[]>([]);
@@ -218,18 +257,18 @@ function App() {
     const calBaselines = (isSimulating || useSerialSimulatorCal) ? SIMULATOR_BASELINES : baselines;
     const calMaxbends  = (isSimulating || useSerialSimulatorCal) ? SIMULATOR_MAXBENDS  : maxbends;
 
-    const convertedSamples = samples.map(sample =>
-      sample.map((value, fingerIndex) => {
-        const thermBaseline = calBaselines[fingerIndex];
-        const thermMaxBend = calMaxbends[fingerIndex];
-
-        // Normalize thermistor (0 = straight, 1 = bent)
-        const normalized = (thermBaseline - value) / (thermBaseline - thermMaxBend);
-        const clamped = Math.max(0, Math.min(1, normalized));
-
-        return clamped; // Always send 0-1 (both local and cloud API use normalized model)
-      })
-    );
+    // Normalize flex (channels 0-4) to 0-1; pass IMU quaternion (channels 5-8) through as-is.
+    // The 21-letter model expects 9 columns — sending real IMU improves accuracy for
+    // IMU-trained letters (B, D, G, H, K, L, P, Q, R, W). Falls back to 5-col gracefully.
+    const convertedSamples = samples.map(sample => {
+      const flexNorm = sample.slice(0, 5).map((value, i) => {
+        const thermBaseline = calBaselines[i];
+        const thermMaxBend  = calMaxbends[i];
+        return Math.max(0, Math.min(1, (thermBaseline - value) / (thermBaseline - thermMaxBend)));
+      });
+      const imuPart = sample.length >= 9 ? sample.slice(5, 9) : [];
+      return [...flexNorm, ...imuPart];
+    });
 
     console.log('[App] Sending normalized 0-1 format');
     console.log('[App] First sample:', convertedSamples[0]);
@@ -339,6 +378,49 @@ function App() {
     
     // Update real-time display
     setCurrentSample(data);
+
+    // Forward normalized data to Unity (Named Pipe and/or WebGL twin)
+    const needsTwinData = (unityPipeEnabledRef.current || webglEnabledRef.current) && data.length >= 5;
+    if (needsTwinData) {
+      // Normalize flex sensors to 0-1
+      const useSimCal = isSimulating || baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
+      const calB = useSimCal ? SIMULATOR_BASELINES : baselines;
+      const calM = useSimCal ? SIMULATOR_MAXBENDS  : maxbends;
+      const normalizedFlex = data.slice(0, 5).map((v, i) =>
+        Math.max(0, Math.min(1, (calB[i] - v) / (calB[i] - calM[i])))
+      );
+
+      // IMU processing:
+      //   1. Capture reference from first sample (reset when pipe/webgl restarts or user recalibrates)
+      //   2. qRel     = inv(refQuat) * currentQuat   (relative rotation)
+      //   3. qRelViz  = axis remap {x←y, y←z, z←x}  (aligns BNO frame → Unity coordinate axes)
+      //
+      // NOTE: Q_TARGET (90° X) is intentionally NOT applied here.
+      // Unity's hand rig default pose already has fingers toward the camera,
+      // so identity = "flat" correctly — adding Q_TARGET would over-rotate by 90°.
+      const imu = currentImuRef.current;
+      let imuXYZ: [number, number, number] = [0, 0, 0];
+      if (imu) {
+        if (!unityRefQuatRef.current) {
+          unityRefQuatRef.current = { w: imu.w, x: imu.x, y: imu.y, z: imu.z };
+        }
+        const ref     = unityRefQuatRef.current;
+        const qRel    = qMult(qInv(ref), imu);
+        const qRelViz: Quat = { w: qRel.w, x: qRel.y, y: qRel.z, z: qRel.x };
+        imuXYZ = [qRelViz.x, qRelViz.y, qRelViz.z];
+      }
+
+      if (unityPipeEnabledRef.current) {
+        invoke('unity_pipe_send', { data: [...normalizedFlex, ...imuXYZ] }).catch(() => {});
+      }
+
+      if (webglEnabledRef.current && webglIframeRef.current?.contentWindow) {
+        webglIframeRef.current.contentWindow.postMessage(
+          { type: 'sensorData', flex: normalizedFlex, imu: { x: imuXYZ[0], y: imuXYZ[1], z: imuXYZ[2] } },
+          '*'
+        );
+      }
+    }
     
     // Add to data log (keep last 100 samples)
     // Append IMU quaternion values if BNO055 is present
@@ -371,7 +453,12 @@ function App() {
     // If recording for prediction (manual mode button), add to sensor buffer
     if (isRecordingPredictionRef.current) {
       setSensorBuffer(prev => {
-        const newBuffer = [...prev, data];
+        // Include IMU quaternion so the 21-letter model gets real orientation data
+        const imuSnap = currentImuRef.current;
+        const sample9 = imuSnap
+          ? [...data, imuSnap.w, imuSnap.x, imuSnap.y, imuSnap.z]
+          : data;
+        const newBuffer = [...prev, sample9];
         const targetSamples = 200;
         
         // Update progress
@@ -409,8 +496,10 @@ function App() {
     // Rolling window: 50 samples (1 sec) = matches model training, faster letter transitions
     const REALTIME_WINDOW = 50;
     if (recognitionMode === 'single' || recognitionMode === 'continuous') {
-      // Add to rolling buffer
-      realTimeBufferRef.current = [...realTimeBufferRef.current, data].slice(-REALTIME_WINDOW);
+      // Include IMU so the 21-letter model gets real orientation data
+      const imuSnap = currentImuRef.current;
+      const sample9 = imuSnap ? [...data, imuSnap.w, imuSnap.x, imuSnap.y, imuSnap.z] : data;
+      realTimeBufferRef.current = [...realTimeBufferRef.current, sample9].slice(-REALTIME_WINDOW);
       
       // Update UI buffer for display
       setSensorBuffer(realTimeBufferRef.current);
@@ -441,7 +530,7 @@ function App() {
     }
 
     // When in manual mode and not recording, don't collect data
-  }, [isRecording, recognitionMode]);
+  }, [isRecording, recognitionMode, isSimulating, baselines, maxbends]);
 
   const handleStopSimulation = () => {
     setIsSimulating(false);
@@ -651,6 +740,94 @@ function App() {
           )}
         </div>
 
+        {/* Unity Named Pipe toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button
+            onClick={async () => {
+              if (unityPipeEnabled) {
+                await invoke('unity_pipe_stop').catch(() => {});
+                unityPipeEnabledRef.current = false;
+                setUnityPipeEnabled(false);
+                setUnityConnected(false);
+              } else {
+                unityRefQuatRef.current = null;  // capture fresh reference on next IMU sample
+                await invoke('unity_pipe_start', { pipeName: 'glove_pipe' }).catch(() => {});
+                unityPipeEnabledRef.current = true;
+                setUnityPipeEnabled(true);
+              }
+            }}
+            style={{
+              padding: '0.4rem 0.9rem', borderRadius: '6px', cursor: 'pointer',
+              fontSize: '0.85rem', fontWeight: 600,
+              background: unityPipeEnabled ? 'rgba(99,102,241,0.15)' : 'rgba(100,116,139,0.1)',
+              color:      unityPipeEnabled ? '#818cf8'               : 'var(--text-secondary)',
+              border:     `1px solid ${unityPipeEnabled ? 'rgba(99,102,241,0.45)' : 'rgba(100,116,139,0.25)'}`,
+            }}>
+            🎮 {unityPipeEnabled ? 'Unity On' : 'Unity Off'}
+          </button>
+          {/* Launch Unity standalone executable */}
+          <button
+            onClick={() => invoke('launch_unity', {
+              exePath: 'C:\\Users\\Yigit\\Desktop\\iot-sign-language-desktop\\unity-handvis\\Build\\ITU_MoCap.exe'
+            }).catch((e: unknown) => alert(String(e)))}
+            title="Open Unity 3D Digital Twin (separate window)"
+            style={{
+              padding: '0.4rem 0.9rem', borderRadius: '6px', cursor: 'pointer',
+              fontSize: '0.85rem', fontWeight: 600,
+              background: 'rgba(16,185,129,0.1)',
+              color: '#34d399',
+              border: '1px solid rgba(16,185,129,0.35)',
+            }}>
+            🪄 Open 3D Twin
+          </button>
+
+          {/* WebGL twin (embedded iframe) */}
+          <button
+            onClick={async () => {
+              if (webglEnabled) {
+                // Stop server + hide iframe
+                await invoke('stop_webgl_server').catch(() => {});
+                webglEnabledRef.current = false;
+                setWebglEnabled(false);
+                setWebglServerRunning(false);
+              } else {
+                try {
+                  unityRefQuatRef.current = null; // fresh IMU reference for the new session
+                  await invoke('start_webgl_server', { dir: WEBGL_DIR, port: WEBGL_PORT });
+                  webglEnabledRef.current = true;
+                  setWebglEnabled(true);
+                  setWebglServerRunning(true);
+                } catch (e) {
+                  alert(`WebGL server error: ${String(e)}`);
+                }
+              }
+            }}
+            title={webglEnabled ? 'Hide embedded 3D Twin' : 'Embed 3D Twin inside this window'}
+            style={{
+              padding: '0.4rem 0.9rem', borderRadius: '6px', cursor: 'pointer',
+              fontSize: '0.85rem', fontWeight: 600,
+              background: webglEnabled ? 'rgba(99,102,241,0.15)' : 'rgba(16,185,129,0.08)',
+              color:      webglEnabled ? '#818cf8'               : '#34d399',
+              border:     `1px solid ${webglEnabled ? 'rgba(99,102,241,0.45)' : 'rgba(16,185,129,0.25)'}`,
+            }}>
+            🖼️ {webglEnabled ? 'Hide Twin (WebGL)' : 'Embed 3D Twin'}
+          </button>
+          {webglServerRunning && (
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+              serving :8787
+            </span>
+          )}
+
+          {unityPipeEnabled && (
+            <span style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: unityConnected ? '#10b981' : '#f59e0b', display: 'inline-block' }} />
+              <span style={{ color: 'var(--text-secondary)' }}>
+                {unityConnected ? 'Unity connected' : 'Waiting for Unity… (pipe: glove_pipe)'}
+              </span>
+            </span>
+          )}
+        </div>
+
         {/* Connection Manager */}
         <ConnectionManager 
           onSensorData={handleSensorData}
@@ -770,6 +947,7 @@ function App() {
             baselines={calBaselines}
             maxbends={calMaxbends}
             quaternion={currentImu}
+            onRecalibrate={() => { unityRefQuatRef.current = null; }}
           />
 
           {/* Right column: Sensor Display on top, Prediction View below */}
@@ -798,6 +976,44 @@ function App() {
         </div>
           );
         })()}
+
+        {/* WebGL 3D Twin (embedded iframe) */}
+        {webglEnabled && (
+          <div style={{
+            marginBottom: '1rem',
+            borderRadius: '12px',
+            overflow: 'hidden',
+            border: '1px solid rgba(99,102,241,0.45)',
+            background: '#000',
+            position: 'relative',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '0.5rem 0.75rem',
+              background: 'rgba(99,102,241,0.12)',
+              borderBottom: '1px solid rgba(99,102,241,0.3)',
+            }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#818cf8' }}>
+                🖼️ 3D Digital Twin (WebGL)
+              </span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                http://localhost:{WEBGL_PORT} · sensor data via postMessage
+              </span>
+            </div>
+            <iframe
+              ref={webglIframeRef}
+              src={`http://localhost:${WEBGL_PORT}`}
+              title="Unity 3D Digital Twin"
+              style={{
+                width: '100%',
+                height: '520px',
+                border: 'none',
+                display: 'block',
+              }}
+              allow="fullscreen"
+            />
+          </div>
+        )}
 
         {/* Manual Prediction Recording */}
         {/* Manual Sign Recording - Only show in Manual mode */}

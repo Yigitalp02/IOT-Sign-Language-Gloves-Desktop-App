@@ -20,6 +20,7 @@ interface HandVisualization3DProps {
   baselines?: number[];
   maxbends?: number[];
   quaternion?: QuaternionData | null;
+  onRecalibrate?: () => void;
 }
 
 const HAND_SKELETON = {
@@ -79,6 +80,7 @@ export default function HandVisualization3D({
   baselines = DEFAULT_BASELINES,
   maxbends  = DEFAULT_MAXBENDS,
   quaternion = null,
+  onRecalibrate,
 }: HandVisualization3DProps) {
   const { theme } = useTheme();
   const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -107,8 +109,12 @@ export default function HandVisualization3D({
   }, [quaternion]);
 
   const handleSetReference = useCallback(() => {
-    if (quaternion) { refQuatRef.current = quaternion; setRefQuat(quaternion); }
-  }, [quaternion]);
+    if (quaternion) {
+      refQuatRef.current = quaternion;
+      setRefQuat(quaternion);
+      onRecalibrate?.();  // notify App.tsx so the Unity pipe ref resets too
+    }
+  }, [quaternion, onRecalibrate]);
 
   // colours derived from theme
   const bgColor   = isDark ? 0x1e293b : 0xf9fafb;

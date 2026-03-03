@@ -19,7 +19,19 @@ Usage:
     1. Make sure VSPE has COM3 <-> COM4 pair created
     2. Run this script (it will connect to COM3)
     3. Desktop app should connect to COM4
-    4. Type a letter (A-Y) + Enter to switch. Ctrl+C to stop.
+    4. Commands (type + Enter):
+         Letters  : A B C D E F G H I K L O P Q R S T V W X Y
+         Poses    : up   flat   down   left   right   tilt
+         Reset    : reset  (back to the letter's own default IMU)
+         Ctrl+C   : stop
+
+   Pose reference (default letter state = palm faces floor, fingers toward camera):
+     flat  – palm faces FLOOR, fingers toward camera  [same as all letters by default]
+     up    – fingers toward CEILING (+Y)
+     tilt  – fingers 45° between ceiling and camera
+     down  – fingers toward FLOOR (-Y)
+     left  – fingers toward LEFT wall (-X)
+     right – fingers toward RIGHT wall (+X)
 """
 
 import serial
@@ -67,9 +79,9 @@ ASL_PATTERNS_NORMALIZED = {
 ASL_PATTERNS = {l: denormalize(p, BASELINES, MAXBENDS) for l, p in ASL_PATTERNS_NORMALIZED.items()}
 
 # ── IMU quaternion orientations per letter ────────────────────────────────────
-# Approximate hand orientations — palm facing forward, slight rotations per sign.
-# Values are unit quaternions (w, x, y, z). Real BNO055 output would look like this.
-# These are display-only: they are NOT used by the prediction model.
+# Approximate hand orientations — unit quaternions (w, x, y, z) as a BNO055 would output.
+# These drive BOTH the 3D desktop visualizer AND the 21-letter prediction model (IMU features).
+# Letters G/H/P/Q/R require specific orientations to distinguish them from flex-identical twins.
 IMU_QUATERNIONS = {
     # ── Flex-only letters: near-identity (any orientation works at inference) ──
     'A': ( 0.9990,  0.0000,  0.0400,  0.0200),   # palm forward
@@ -87,14 +99,53 @@ IMU_QUATERNIONS = {
     'Y': ( 0.9980,  0.0000, -0.0500,  0.0300),   # palm forward
 
     # ── IMU-required letters: specific orientations the model was trained on ──
-    'D': ( 0.9970,  0.0000,  0.0710,  0.0300),   # palm forward, index UP (distinguishes from G)
-    'K': ( 0.9960,  0.0000,  0.0870,  0.0300),   # palm forward, K shape UP (distinguishes from P)
-    'G': ( 0.7071,  0.0000,  0.7071,  0.0000),   # wrist rotated ~90° — index points LEFT
-    'H': ( 0.7071,  0.0000,  0.7071,  0.0300),   # wrist rotated ~90° — index+middle point LEFT
-    'L': ( 0.9800,  0.0000,  0.2000,  0.0000),   # palm forward, slight pitch — L-shape up
-    'P': ( 0.9239,  0.3827,  0.0000,  0.0000),   # pitched DOWN ~45° (like K but floor-ward)
-    'Q': ( 0.6533,  0.2706,  0.6533,  0.2706),   # rotated sideways + pitched DOWN (like G but floor-ward)
-    'R': ( 0.2588,  0.9659,  0.0000,  0.0000),   # ~150° pitch — fingers pointing DOWNWARD (distinguishes from V)
+    # Quaternions derived to produce the correct visual in the Three.js desktop visualizer
+    # (same pipeline: qRelViz axis-remap → multiply by Q_TARGET = 90° around X)
+    'D': ( 0.9970,  0.0000,  0.0710,  0.0300),   # near-flat: index UP, distinguishes from G
+    'K': ( 0.9960,  0.0000,  0.0870,  0.0300),   # near-flat: K shape UP, distinguishes from P
+    'G': ( 0.5000, -0.5000, -0.5000,  0.5000),   # = 'right' preset: fingers point SIDEWAYS (+X)
+    'H': ( 0.5000, -0.5000, -0.5000,  0.5000),   # same as G: index+middle point SIDEWAYS (+X)
+    'L': ( 0.9800,  0.0000,  0.2000,  0.0000),   # near-flat with slight tilt: L-shape
+    'P': ( 0.9239,  0.0000,  0.3827,  0.0000),   # 45° below flat: fingers point down-toward-camera (like K but tilted down)
+    'Q': ( 0.8926, -0.3134, -0.0735,  0.3134),   # diagonal: between G(sideways) and P(tilted-down)
+    'R': ( 0.8191,  0.0000,  0.5735,  0.0000),   # 70° below flat: fingers steeply down-toward-camera (distinguishes from V=flat)
+}
+
+# ── IMU orientation presets (overrides letter's default IMU) ──────────────────
+# The visualizer remaps BNO axes before applying Q_TARGET (90° around X):
+#   qRelViz = { w:qRel.w, x:qRel.y, y:qRel.z, z:qRel.x }
+#   Then: qFinal = qRelViz * Q_TARGET
+#
+# Consequence: BNO Y rotation → Viz X rotation → tilts fingers up/down.
+#              BNO X rotation → Viz Z rotation → rolls palm left/right (does NOT tilt fingers).
+#
+# Default/identity BNO state (all letters near identity):
+#   fingers point toward camera (+Z in Three.js), palm faces floor (-Y)
+#   = hand lying flat on a desk, fingers pointing toward the viewer
+#
+# Derived by solving qFinal = desired_world_rotation * Q_TARGET⁻¹ then
+# reversing the axis remap to recover the required BNO quaternion:
+#
+#   flat/default → identity → fingers toward camera, palm down   (same as letters A–Y default)
+#   up           → -90° BNO Y → qFinal=identity → fingers toward +Y (ceiling)
+#   tilt         → +22.5° BNO Y → fingers 45° downward from ceiling
+#   down         → +90° BNO Y  → qFinal=180°X  → fingers toward -Y (floor)
+#   left         → +90° around combined axes → fingers toward -X (left wall)
+#   right        → -90° around combined axes → fingers toward +X (right wall)
+ORIENTATION_PRESETS = {
+    # fingers toward camera, palm down — this is the same as the default letter state
+    'flat':   (1.0000,  0.0000,  0.0000,  0.0000),
+    # -90° BNO Y  →  qFinal = identity  →  fingers toward ceiling (+Y)
+    'up':     (0.7071,  0.0000, -0.7071,  0.0000),
+    # +22.5° BNO Y  →  fingers 45° between ceiling and camera
+    'tilt':   (0.9239,  0.0000,  0.3827,  0.0000),
+    # +90° BNO Y  →  qFinal = 180° X  →  fingers toward floor (-Y)
+    'down':   (0.7071,  0.0000,  0.7071,  0.0000),
+    # +90° BNO Z  →  qFinal = 90° Z  →  fingers toward left wall (-X)
+    'left':   (0.5000,  0.5000, -0.5000, -0.5000),
+    # -90° BNO Z  →  qFinal = -90° Z  →  fingers toward right wall (+X)
+    'right':  (0.5000, -0.5000, -0.5000,  0.5000),
+    'reset':  None,   # sentinel: revert to the letter's own default IMU
 }
 
 # ── Noise helpers ─────────────────────────────────────────────────────────────
@@ -151,49 +202,88 @@ def main():
         print(f"Connected to {PORT}")
         print("Sending flex + IMU quaternion data at 50 Hz")
         print("Format: ch0,ch1,ch2,ch3,ch4,w,x,y,z")
-        print("\nControls: Type a letter (A,B,C,D,E,F,I,K,O,S,T,V,W,X,Y) + Enter")
-        print("          Ctrl+C to stop.\n")
+        print()
+        print("── Letter commands ──────────────────────────────────────────")
+        print(f"  {', '.join(sorted(ASL_PATTERNS.keys()))}")
+        print()
+        print("── Orientation commands (change hand angle, keep current letter) ──")
+        print("  flat   – palm faces FLOOR, fingers toward camera  [default letter state]")
+        print("  up     – fingers toward CEILING (+Y)")
+        print("  tilt   – fingers 45° between ceiling and camera")
+        print("  down   – fingers toward the FLOOR (-Y)")
+        print("  left   – fingers toward the LEFT wall (-X)")
+        print("  right  – fingers toward the RIGHT wall (+X)")
+        print("  reset  – revert to this letter's own default IMU orientation")
+        print()
+        print("  Ctrl+C to stop.")
+        print()
 
-        current_letter = ['A']
-        valid_letters  = sorted(ASL_PATTERNS.keys())
+        # Shared state — use lists so the input thread can mutate them
+        current_letter  = ['A']
+        imu_override    = [None]   # None = use letter's default IMU
+
+        valid_letters   = sorted(ASL_PATTERNS.keys())
+        valid_poses     = sorted(ORIENTATION_PRESETS.keys())
 
         def input_thread():
             while True:
                 try:
-                    inp = input("Letter> ").strip().upper()
+                    inp = input("> ").strip().lower()
                     if not inp:
                         continue
-                    letter = inp[0]
+
+                    # Check orientation preset first (multi-char keywords)
+                    if inp in ORIENTATION_PRESETS:
+                        preset = ORIENTATION_PRESETS[inp]
+                        imu_override[0] = preset   # None for 'reset'
+                        if preset is None:
+                            print(f"  IMU reset → using {current_letter[0]}'s default orientation")
+                        else:
+                            print(f"  Orientation → {inp}")
+                        continue
+
+                    # Otherwise treat as a letter command
+                    letter = inp[0].upper()
                     if letter in ASL_PATTERNS:
                         current_letter[0] = letter
-                        print(f"  Switched to {letter}")
+                        print(f"  Letter → {letter}  (IMU override: {'ON' if imu_override[0] else 'off'})")
                     else:
-                        print(f"  Valid: {', '.join(valid_letters)}")
+                        print(f"  Unknown command. Letters: {', '.join(valid_letters)}")
+                        print(f"  Poses: {', '.join(valid_poses)}")
                 except (EOFError, Exception):
                     break
 
         threading.Thread(target=input_thread, daemon=True).start()
 
-        prev_letter = current_letter[0]
+        prev_letter      = current_letter[0]
+        prev_imu         = IMU_QUATERNIONS[prev_letter]
 
         while True:
-            letter = current_letter[0]
+            letter   = current_letter[0]
+            override = imu_override[0]
+            target_imu = override if override is not None else IMU_QUATERNIONS[letter]
 
-            if letter != prev_letter:
-                # Smooth transition in both flex and IMU
+            if letter != prev_letter or target_imu != prev_imu:
+                # Smooth transition in flex (if letter changed) and IMU
                 for flex, imu in smooth_transition(
                     ASL_PATTERNS[prev_letter], ASL_PATTERNS[letter],
-                    IMU_QUATERNIONS[prev_letter], IMU_QUATERNIONS[letter],
+                    prev_imu, target_imu,
                     steps=25,
                 ):
                     ser.write(fmt_line(add_flex_noise(flex), add_imu_noise(imu)).encode())
                     time.sleep(SAMPLE_RATE)
                 prev_letter = letter
+                prev_imu    = target_imu
 
-            # Hold current letter for 1-second burst (responsive to input changes)
+            # Hold current state for 1-second burst (responsive to input changes)
             flex = ASL_PATTERNS[letter]
-            imu  = IMU_QUATERNIONS[letter]
+            imu  = target_imu
             for _ in range(50):
+                # Re-read override in case it changed during this burst
+                override   = imu_override[0]
+                target_imu = override if override is not None else IMU_QUATERNIONS[letter]
+                if target_imu != prev_imu:
+                    break   # exit burst early, outer loop will smooth-transition
                 ser.write(fmt_line(add_flex_noise(flex), add_imu_noise(imu)).encode())
                 time.sleep(SAMPLE_RATE)
 

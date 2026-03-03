@@ -16,7 +16,6 @@ const ASL_LETTERS_FLEX  = ['A', 'B', 'C', 'E', 'F', 'I', 'O', 'S', 'T', 'V', 'W'
 // IMU-required letters — must be recorded with BNO055 connected at specific orientation
 // D and K re-recorded with IMU so model can distinguish them from G and P respectively
 const ASL_LETTERS_IMU   = ['D', 'K', 'G', 'H', 'L', 'P', 'Q', 'R'];
-const ASL_LETTERS = [...ASL_LETTERS_FLEX, ...ASL_LETTERS_IMU];
 
 // LEFT-HAND specific orientation hints for IMU-dependent letters
 // (standard ASL descriptions are for right hand; left hand is the mirror)
