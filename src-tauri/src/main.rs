@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::thread;
+use std::net::TcpStream;
+use std::io::{BufRead, BufReader};
 use serialport::SerialPort;
 
 // ── Unity Named Pipe ──────────────────────────────────────────────────────────
@@ -801,17 +803,124 @@ fn stop_webgl_server(state: tauri::State<WebGLServerShared>) -> Result<(), Strin
     }
 }
 
+// ── WiFi TCP client ───────────────────────────────────────────────────────────
+// Connects to the ESP32's TCP server (192.168.4.1:3333) and reads the same
+// CSV lines as USB serial, emitting identical "serial-data" / "serial-imu" events.
+
+type WifiStopFlag  = Arc<AtomicBool>;
+type WifiStateShared = Arc<Mutex<Option<WifiStopFlag>>>;
+
+#[tauri::command]
+fn connect_wifi(
+    host: String,
+    port: u16,
+    window: tauri::Window,
+    wifi_state: tauri::State<WifiStateShared>,
+) -> Result<String, String> {
+    // Stop any existing WiFi connection first
+    {
+        let mut s = wifi_state.lock().unwrap();
+        if let Some(flag) = s.take() {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+    thread::sleep(Duration::from_millis(150));
+
+    let addr = format!("{}:{}", host, port);
+    let stream = TcpStream::connect_timeout(
+        &addr.parse().map_err(|e| format!("Bad address {}: {}", addr, e))?,
+        Duration::from_secs(5),
+    ).map_err(|e| format!("Cannot connect to {}: {}", addr, e))?;
+
+    stream.set_read_timeout(Some(Duration::from_millis(200)))
+        .map_err(|e| format!("set_read_timeout: {}", e))?;
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    {
+        let mut s = wifi_state.lock().unwrap();
+        *s = Some(stop_flag.clone());
+    }
+
+    let stop_clone = stop_flag.clone();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stream);
+        let mut line   = String::new();
+        let mut first_line_skipped = false;
+
+        loop {
+            if stop_clone.load(Ordering::Relaxed) { break; }
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => { break; }   // connection closed by ESP32
+                Ok(_) => {
+                    let trimmed = line.trim().to_string();
+                    if trimmed.is_empty() { continue; }
+
+                    // Skip first line — may be partial after connect
+                    if !first_line_skipped {
+                        first_line_skipped = true;
+                        continue;
+                    }
+
+                    // Same parsing as the serial thread so the same React callbacks fire
+                    let values: Vec<&str> = trimmed.split(',').collect();
+                    if values.len() == 9 {
+                        let thermistors: Vec<i32> = values[..5]
+                            .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
+                        let quats: Vec<f32> = values[5..]
+                            .iter().filter_map(|s| s.trim().parse::<f32>().ok()).collect();
+                        if thermistors.len() == 5 && quats.len() == 4 {
+                            let _ = window.emit("serial-data", &thermistors);
+                            let imu_payload = serde_json::json!({
+                                "w": quats[0], "x": quats[1],
+                                "y": quats[2], "z": quats[3]
+                            });
+                            let _ = window.emit("serial-imu", imu_payload);
+                        }
+                    } else if values.len() == 5 {
+                        let parsed: Vec<i32> = values
+                            .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
+                        if parsed.len() == 5 {
+                            let _ = window.emit("serial-data", parsed);
+                        }
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
+                           || e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // no data this tick — keep looping
+                }
+                Err(_) => { break; }
+            }
+        }
+    });
+
+    Ok(format!("Connected to {} via WiFi", addr))
+}
+
+#[tauri::command]
+fn disconnect_wifi(wifi_state: tauri::State<WifiStateShared>) -> Result<String, String> {
+    let mut s = wifi_state.lock().unwrap();
+    if let Some(flag) = s.take() {
+        flag.store(true, Ordering::Relaxed);
+        Ok("WiFi disconnected".to_string())
+    } else {
+        Ok("No WiFi connection active".to_string())
+    }
+}
+
 fn main() {
     let serial_state: SerialPortState = Arc::new(Mutex::new(None));
     let reading_active: ReadingActiveState = Arc::new(Mutex::new(false));
     let unity_pipe: UnityPipeShared = Arc::new(Mutex::new(UnityPipeState::new()));
     let webgl_server: WebGLServerShared = Arc::new(Mutex::new(WebGLServerState::new()));
+    let wifi_state: WifiStateShared = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
         .manage(serial_state)
         .manage(reading_active)
         .manage(unity_pipe)
         .manage(webgl_server)
+        .manage(wifi_state)
         .invoke_handler(tauri::generate_handler![
             tts_say,
             list_ports,
@@ -827,6 +936,8 @@ fn main() {
             launch_unity,
             start_webgl_server,
             stop_webgl_server,
+            connect_wifi,
+            disconnect_wifi,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
