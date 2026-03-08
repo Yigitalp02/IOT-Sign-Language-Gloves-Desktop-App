@@ -74,6 +74,10 @@ function App() {
   const [unityPipeEnabled, setUnityPipeEnabled] = useState(false);
   const [unityConnected,   setUnityConnected]   = useState(false);
   const unityPipeEnabledRef = useRef(false);
+  // EMA (Exponential Moving Average) buffer for smoothing data sent to Unity/WebGL
+  // Applied to raw ADC values before normalization — lower alpha = smoother but laggier
+  const PIPE_EMA_ALPHA = 0.25; // 0=frozen, 1=raw — 0.25 gives ~4-sample smoothing
+  const pipeEmaRef = useRef<number[] | null>(null);
   // Reference quaternion captured from the first IMU sample each Unity session.
   // Mirrors HandVisualization3D's refQuat so both show the same relative orientation.
   const unityRefQuatRef = useRef<Quat | null>(null);
@@ -82,9 +86,22 @@ function App() {
   const [webglEnabled,       setWebglEnabled]       = useState(false);
   const [webglServerRunning, setWebglServerRunning] = useState(false);
   const webglEnabledRef = useRef(false);
-  const webglIframeRef  = useRef<HTMLIFrameElement>(null);
+  const webglIframeRef      = useRef<HTMLIFrameElement>(null);
+  const webglContainerRef   = useRef<HTMLDivElement>(null);
+  const [webglScale, setWebglScale] = useState(0.75); // updated by ResizeObserver
   const WEBGL_PORT = 8787;
   const WEBGL_DIR  = 'C:\\Users\\Yigit\\Desktop\\iot-sign-language-desktop\\unity-handvis\\WebGLBuild';
+
+  // Keep WebGL scale in sync with its column width (960px native canvas → scale to fit)
+  useEffect(() => {
+    if (!webglEnabled || !webglContainerRef.current) return;
+    const observer = new ResizeObserver(entries => {
+      const w = entries[0].contentRect.width;
+      if (w > 0) setWebglScale(w / 960);
+    });
+    observer.observe(webglContainerRef.current);
+    return () => observer.disconnect();
+  }, [webglEnabled]);
 
   // Poll pipe connection status while enabled
   useEffect(() => {
@@ -284,8 +301,17 @@ function App() {
     };
 
     try {
+      // Include current IMU quaternion so the local two-staged model can run stage-2
+      // disambiguation for letters G, H, K, P, Q, R, etc. that look flex-identical.
+      const imuPayload = currentImuRef.current
+        ? [currentImuRef.current.w, currentImuRef.current.x, currentImuRef.current.y, currentImuRef.current.z] as [number, number, number, number]
+        : undefined;
+
+      console.log('[App] IMU sent to model:', imuPayload ?? 'none (no IMU data)');
+
       const response = await apiService.predict({
-        flex_sensors: convertedSamples, // Send converted flex sensor values
+        flex_sensors: convertedSamples,
+        imu: imuPayload,
         device_id: isSimulating ? 'desktop-simulator' : 'desktop-glove'
       });
 
@@ -382,11 +408,17 @@ function App() {
     // Forward normalized data to Unity (Named Pipe and/or WebGL twin)
     const needsTwinData = (unityPipeEnabledRef.current || webglEnabledRef.current) && data.length >= 5;
     if (needsTwinData) {
+      // Apply EMA smoothing to raw ADC values before normalization
+      const raw5 = data.slice(0, 5);
+      if (!pipeEmaRef.current) pipeEmaRef.current = [...raw5];
+      pipeEmaRef.current = pipeEmaRef.current.map((v, i) => v + PIPE_EMA_ALPHA * (raw5[i] - v));
+      const smoothed = pipeEmaRef.current;
+
       // Normalize flex sensors to 0-1
       const useSimCal = isSimulating || baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
       const calB = useSimCal ? SIMULATOR_BASELINES : baselines;
       const calM = useSimCal ? SIMULATOR_MAXBENDS  : maxbends;
-      const normalizedFlex = data.slice(0, 5).map((v, i) =>
+      const normalizedFlex = smoothed.map((v, i) =>
         Math.max(0, Math.min(1, (calB[i] - v) / (calB[i] - calM[i])))
       );
 
@@ -751,6 +783,7 @@ function App() {
                 setUnityConnected(false);
               } else {
                 unityRefQuatRef.current = null;  // capture fresh reference on next IMU sample
+                pipeEmaRef.current = null;        // reset EMA buffer on reconnect
                 await invoke('unity_pipe_start', { pipeName: 'glove_pipe' }).catch(() => {});
                 unityPipeEnabledRef.current = true;
                 setUnityPipeEnabled(true);
@@ -793,6 +826,7 @@ function App() {
               } else {
                 try {
                   unityRefQuatRef.current = null; // fresh IMU reference for the new session
+                  pipeEmaRef.current = null;       // reset EMA buffer for new session
                   await invoke('start_webgl_server', { dir: WEBGL_DIR, port: WEBGL_PORT });
                   webglEnabledRef.current = true;
                   setWebglEnabled(true);
@@ -921,97 +955,86 @@ function App() {
           </p>
         </div>
 
-        {/* 3D Hand (left, full height) | Sensor Display + Prediction View (right column) */}
-        {(() => {
-          const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
-          const SIMULATOR_MAXBENDS = [2200, 1300, 1480, 1640, 1720];
-          const useSimulatorCal = isSimulating || (
-            connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1)
-          );
-          const calBaselines = useSimulatorCal ? SIMULATOR_BASELINES : baselines;
-          const calMaxbends = useSimulatorCal ? SIMULATOR_MAXBENDS : maxbends;
-          return (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: '1rem',
-          marginBottom: '1rem',
-          alignItems: 'start'
-        }}>
-          <HandVisualization3D
-            currentSample={currentSample}
-            isActive={isSimulating || connectedDevice !== null}
-            prediction={currentPrediction?.letter}
-            confidence={currentPrediction?.confidence}
-            onTestSample={(sample) => setCurrentSample(sample)}
-            baselines={calBaselines}
-            maxbends={calMaxbends}
-            quaternion={currentImu}
-            onRecalibrate={() => { unityRefQuatRef.current = null; }}
-          />
-
-          {/* Right column: Sensor Display on top, Prediction View below */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <SensorDisplay
-              currentSample={currentSample}
-              isActive={isSimulating || connectedDevice !== null}
-              sampleCount={sensorBuffer.length}
-              targetSamples={recognitionMode === 'manual' ? 200 : 50}
-              isCollecting={isCollectingRef.current}
-              baselines={calBaselines}
-              maxbends={calMaxbends}
-            />
-            <PredictionView
-              prediction={currentPrediction}
-              isLoading={isAnalyzing}
-              error={predictionError}
-              sampleCount={sensorBuffer.length}
-              isContinuousMode={recognitionMode === 'continuous'}
-              currentWord={detectedLetters.join('')}
-              onClearWord={handleClearWord}
-              onDeleteLetter={handleDeleteLetter}
-              isRealTimeMode={recognitionMode === 'single' || recognitionMode === 'continuous'}
-            />
-          </div>
-        </div>
-          );
-        })()}
-
-        {/* WebGL 3D Twin (embedded iframe) */}
+        {/* WebGL 3D Twin + Prediction View side by side */}
         {webglEnabled && (
           <div style={{
+            display: 'grid',
+            gridTemplateColumns: '2fr 1fr',
+            gap: '1rem',
             marginBottom: '1rem',
-            borderRadius: '12px',
-            overflow: 'hidden',
-            border: '1px solid rgba(99,102,241,0.45)',
-            background: '#000',
-            position: 'relative',
+            alignItems: 'stretch',
           }}>
+            {/* WebGL card — 2/3 width */}
             <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '0.5rem 0.75rem',
-              background: 'rgba(99,102,241,0.12)',
-              borderBottom: '1px solid rgba(99,102,241,0.3)',
+              borderRadius: '12px',
+              overflow: 'hidden',
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-card)',
             }}>
-              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#818cf8' }}>
-                🖼️ 3D Digital Twin (WebGL)
-              </span>
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                http://localhost:{WEBGL_PORT} · sensor data via postMessage
-              </span>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '0.75rem 1rem',
+                borderBottom: '1px solid var(--border-color)',
+              }}>
+                <div>
+                  <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    🖼️ 3D Digital Twin
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
+                    WebGL · Live Hand Pose
+                  </span>
+                </div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                  localhost:{WEBGL_PORT}
+                </span>
+              </div>
+              {/*
+                Responsive scaling: ResizeObserver measures this div's width,
+                sets webglScale = width/960. The iframe renders at 960×960 then
+                scales down; the container height = 960*scale = column width (square).
+              */}
+              <div
+                ref={webglContainerRef}
+                style={{
+                  width: '100%',
+                  height: `${960 * webglScale * 0.6}px`,
+                  overflow: 'hidden',
+                  background: 'var(--bg-secondary)',
+                }}
+              >
+                <iframe
+                  ref={webglIframeRef}
+                  src={`http://localhost:${WEBGL_PORT}`}
+                  title="Unity 3D Digital Twin"
+                  style={{
+                    width: '960px',
+                    height: '960px',
+                    border: 'none',
+                    display: 'block',
+                    transform: `scale(${webglScale})`,
+                    transformOrigin: 'top left',
+                  }}
+                  allow="fullscreen"
+                  // @ts-ignore
+                  scrolling="no"
+                />
+              </div>
             </div>
-            <iframe
-              ref={webglIframeRef}
-              src={`http://localhost:${WEBGL_PORT}`}
-              title="Unity 3D Digital Twin"
-              style={{
-                width: '100%',
-                height: '520px',
-                border: 'none',
-                display: 'block',
-              }}
-              allow="fullscreen"
-            />
+
+            {/* Prediction View — 1/3 width, stretched to match WebGL card height */}
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <PredictionView
+                prediction={currentPrediction}
+                isLoading={isAnalyzing}
+                error={predictionError}
+                sampleCount={sensorBuffer.length}
+                isContinuousMode={recognitionMode === 'continuous'}
+                currentWord={detectedLetters.join('')}
+                onClearWord={handleClearWord}
+                onDeleteLetter={handleDeleteLetter}
+                isRealTimeMode={recognitionMode === 'single' || recognitionMode === 'continuous'}
+              />
+            </div>
           </div>
         )}
 
@@ -1213,6 +1236,60 @@ function App() {
           targetSamples={150}
           isConnected={connectedDevice !== null}
         />
+
+        {/* 3D Hand Visualizer + Sensor Display (moved below Data Recorder) */}
+        {(() => {
+          const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
+          const SIMULATOR_MAXBENDS = [2200, 1300, 1480, 1640, 1720];
+          const useSimulatorCal = isSimulating || (
+            connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1)
+          );
+          const calBaselines = useSimulatorCal ? SIMULATOR_BASELINES : baselines;
+          const calMaxbends = useSimulatorCal ? SIMULATOR_MAXBENDS : maxbends;
+          return (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '1rem',
+              marginBottom: '1rem',
+              alignItems: 'start'
+            }}>
+              <HandVisualization3D
+                currentSample={currentSample}
+                isActive={isSimulating || connectedDevice !== null}
+                prediction={currentPrediction?.letter}
+                confidence={currentPrediction?.confidence}
+                onTestSample={(sample) => setCurrentSample(sample)}
+                baselines={calBaselines}
+                maxbends={calMaxbends}
+                quaternion={currentImu}
+                onRecalibrate={() => { unityRefQuatRef.current = null; }}
+              />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <SensorDisplay
+                  currentSample={currentSample}
+                  isActive={isSimulating || connectedDevice !== null}
+                  sampleCount={sensorBuffer.length}
+                  targetSamples={recognitionMode === 'manual' ? 200 : 50}
+                  isCollecting={isCollectingRef.current}
+                  baselines={calBaselines}
+                  maxbends={calMaxbends}
+                />
+                <PredictionView
+                  prediction={currentPrediction}
+                  isLoading={isAnalyzing}
+                  error={predictionError}
+                  sampleCount={sensorBuffer.length}
+                  isContinuousMode={recognitionMode === 'continuous'}
+                  currentWord={detectedLetters.join('')}
+                  onClearWord={handleClearWord}
+                  onDeleteLetter={handleDeleteLetter}
+                  isRealTimeMode={recognitionMode === 'single' || recognitionMode === 'continuous'}
+                />
+              </div>
+            </div>
+          );
+        })()}
 
       <div className="footer">
         <p className="info-text">{t("app.footer")}</p>

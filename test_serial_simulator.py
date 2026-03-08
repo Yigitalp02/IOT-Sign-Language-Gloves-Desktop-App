@@ -53,28 +53,30 @@ def denormalize(normalized, baselines, maxbends):
     return [int(baselines[i] + normalized[i] * (maxbends[i] - baselines[i])) for i in range(5)]
 
 # ── ASL finger patterns (0=straight, 1=bent) ─────────────────────────────────
+# Values extracted from actual professor training data (mean per letter).
+# ch0=thumb, ch1=index, ch2=middle, ch3=ring, ch4=pinky
 ASL_PATTERNS_NORMALIZED = {
-    'A': [0.00, 1.00, 0.90, 1.00, 1.00],
-    'B': [0.74, 0.05, 0.06, 0.10, 0.13],
-    'C': [0.00, 1.00, 0.85, 0.98, 0.86],
-    'D': [0.09, 0.05, 0.85, 1.00, 0.79],
-    'E': [0.88, 1.00, 0.97, 1.00, 0.97],
-    'F': [0.04, 0.52, 0.11, 0.26, 0.28],
-    'G': [0.10, 0.10, 0.90, 0.95, 0.90],   # index+thumb out sideways, others bent
-    'H': [0.70, 0.10, 0.10, 0.95, 0.90],   # index+middle out sideways, others bent
-    'I': [0.83, 0.99, 0.85, 0.98, 0.20],
-    'K': [0.04, 0.53, 0.21, 0.87, 0.50],
-    'L': [0.05, 0.05, 0.90, 0.95, 0.90],   # thumb up + index forward, L-shape
-    'O': [0.02, 0.91, 0.81, 0.98, 0.78],
-    'P': [0.04, 0.53, 0.21, 0.87, 0.50],   # same flex as K, differs by IMU (pitched down)
-    'Q': [0.10, 0.10, 0.90, 0.95, 0.90],   # same flex as G, differs by IMU (pitched down)
-    'R': [0.55, 0.28, 0.22, 0.94, 0.81],   # index+middle crossed — similar to V, differs by IMU (fingers DOWN)
-    'S': [0.57, 0.92, 0.87, 1.00, 0.96],
-    'T': [0.07, 0.88, 0.88, 1.00, 1.00],
-    'V': [0.55, 0.31, 0.19, 0.94, 0.81],
-    'W': [0.72, 0.09, 0.03, 0.15, 0.90],
-    'X': [0.48, 0.33, 0.77, 0.92, 0.91],
-    'Y': [0.01, 0.98, 0.91, 0.95, 0.03],
+    'A': [0.0040, 0.8067, 0.9911, 0.9987, 0.9976],
+    'B': [0.9379, 0.0000, 0.0001, 0.0045, 0.1919],
+    'C': [0.0256, 0.3829, 0.7685, 0.6533, 0.8023],
+    'D': [0.7846, 0.0032, 0.7969, 0.8894, 0.8866],
+    'E': [0.8581, 0.6188, 0.9779, 0.9826, 0.9116],
+    'F': [0.8187, 0.5793, 0.0053, 0.0013, 0.0111],
+    'G': [0.2084, 0.0000, 0.8620, 0.9432, 0.9218],
+    'H': [0.9752, 0.0000, 0.2935, 0.8228, 0.5178],
+    'I': [0.7892, 0.2775, 0.7126, 0.6707, 0.0083],
+    'K': [0.0059, 0.0015, 0.0746, 0.7792, 0.5689],
+    'L': [0.0000, 0.0000, 0.8554, 0.9833, 0.9902],
+    'O': [0.0961, 0.2506, 0.8400, 0.7338, 0.5442],
+    'P': [0.0000, 0.0000, 0.2932, 0.8840, 0.6322],
+    'Q': [0.3055, 0.0000, 0.8943, 0.9169, 0.7865],
+    'R': [0.8669, 0.0000, 0.2560, 0.7749, 0.8513],
+    'S': [0.6921, 0.5537, 0.9941, 0.9902, 0.8541],
+    'T': [0.0000, 0.4662, 0.8822, 0.7773, 0.8903],
+    'V': [0.8134, 0.0000, 0.0225, 0.8406, 0.7180],
+    'W': [0.9761, 0.0000, 0.0008, 0.0318, 0.4394],
+    'X': [0.8555, 0.3450, 0.9520, 0.9814, 0.8685],
+    'Y': [0.0781, 0.9664, 0.9122, 0.8085, 0.0271],
 }
 ASL_PATTERNS = {l: denormalize(p, BASELINES, MAXBENDS) for l, p in ASL_PATTERNS_NORMALIZED.items()}
 
@@ -83,32 +85,30 @@ ASL_PATTERNS = {l: denormalize(p, BASELINES, MAXBENDS) for l, p in ASL_PATTERNS_
 # These drive BOTH the 3D desktop visualizer AND the 21-letter prediction model (IMU features).
 # Letters G/H/P/Q/R require specific orientations to distinguish them from flex-identical twins.
 IMU_QUATERNIONS = {
-    # ── Flex-only letters: near-identity (any orientation works at inference) ──
-    'A': ( 0.9990,  0.0000,  0.0400,  0.0200),   # palm forward
-    'B': ( 0.9980,  0.0600,  0.0000,  0.0000),   # palm forward, fingers up
-    'C': ( 0.9950,  0.0000,  0.0980,  0.0200),   # palm forward, cupped
-    'E': ( 0.9985,  0.0000,  0.0400,  0.0400),   # palm forward, all curled
-    'F': ( 0.9975,  0.0500,  0.0600,  0.0200),   # palm forward
-    'I': ( 0.9975,  0.0600, -0.0300,  0.0300),   # palm forward, pinky up
-    'O': ( 0.9950,  0.0000,  0.0980,  0.0500),   # palm forward, O shape
-    'S': ( 0.9985,  0.0200,  0.0400,  0.0400),   # palm forward, fist
-    'T': ( 0.9970, -0.0710,  0.0000,  0.0100),   # palm sideways
-    'V': ( 0.9980,  0.0000,  0.0500,  0.0300),   # palm forward, fingers UP
-    'W': ( 0.9975,  0.0000,  0.0600,  0.0500),   # palm forward
-    'X': ( 0.9970,  0.0710,  0.0300,  0.0000),   # palm sideways, hook
-    'Y': ( 0.9980,  0.0000, -0.0500,  0.0300),   # palm forward
+    # ── Flex-only letters: identity quaternion (IMU not used for these at inference) ──
+    'A': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'C': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'E': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'F': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'I': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'O': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'S': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'T': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'V': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'X': ( 1.0000,  0.0000,  0.0000,  0.0000),
+    'Y': ( 1.0000,  0.0000,  0.0000,  0.0000),
 
-    # ── IMU-required letters: specific orientations the model was trained on ──
-    # Quaternions derived to produce the correct visual in the Three.js desktop visualizer
-    # (same pipeline: qRelViz axis-remap → multiply by Q_TARGET = 90° around X)
-    'D': ( 0.9970,  0.0000,  0.0710,  0.0300),   # near-flat: index UP, distinguishes from G
-    'K': ( 0.9960,  0.0000,  0.0870,  0.0300),   # near-flat: K shape UP, distinguishes from P
-    'G': ( 0.5000, -0.5000, -0.5000,  0.5000),   # = 'right' preset: fingers point SIDEWAYS (+X)
-    'H': ( 0.5000, -0.5000, -0.5000,  0.5000),   # same as G: index+middle point SIDEWAYS (+X)
-    'L': ( 0.9800,  0.0000,  0.2000,  0.0000),   # near-flat with slight tilt: L-shape
-    'P': ( 0.9239,  0.0000,  0.3827,  0.0000),   # 45° below flat: fingers point down-toward-camera (like K but tilted down)
-    'Q': ( 0.8926, -0.3134, -0.0735,  0.3134),   # diagonal: between G(sideways) and P(tilted-down)
-    'R': ( 0.8191,  0.0000,  0.5735,  0.0000),   # 70° below flat: fingers steeply down-toward-camera (distinguishes from V=flat)
+    # ── IMU-required letters: mean quaternion from actual training recordings ──
+    'B': ( 0.4358,  0.4781, -0.4257,  0.6244),
+    'D': ( 0.4779,  0.5061, -0.5340,  0.4739),
+    'G': ( 0.4780, -0.5103, -0.5969,  0.3904),
+    'H': ( 0.5331, -0.5069, -0.5106,  0.4286),
+    'K': ( 0.4861,  0.3582, -0.7495,  0.2595),
+    'L': ( 0.3667,  0.5497, -0.3950,  0.6321),
+    'P': ( 0.5500, -0.6344, -0.1630,  0.1022),
+    'Q': (-0.1754, -0.6205, -0.2305,  0.6396),
+    'R': (-0.3909, -0.5847, -0.3984,  0.5790),
+    'W': ( 0.5432,  0.3863, -0.5543,  0.4864),
 }
 
 # ── IMU orientation presets (overrides letter's default IMU) ──────────────────

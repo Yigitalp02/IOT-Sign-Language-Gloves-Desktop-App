@@ -11,9 +11,15 @@ import C_img from '../assets/asl/C.png';
 import D_img from '../assets/asl/D.png';
 import E_img from '../assets/asl/E.png';
 import F_img from '../assets/asl/F.png';
+import G_img from '../assets/asl/G.png';
+import H_img from '../assets/asl/H.png';
 import I_img from '../assets/asl/I.png';
 import K_img from '../assets/asl/K.png';
+import L_img from '../assets/asl/L.png';
 import O_img from '../assets/asl/O.png';
+import P_img from '../assets/asl/P.png';
+import Q_img from '../assets/asl/Q.png';
+import R_img from '../assets/asl/R.png';
 import S_img from '../assets/asl/S.png';
 import T_img from '../assets/asl/T.png';
 import V_img from '../assets/asl/V.png';
@@ -28,9 +34,15 @@ const ASL_SIGNS: { [key: string]: string } = {
   D: D_img,
   E: E_img,
   F: F_img,
+  G: G_img,
+  H: H_img,
   I: I_img,
   K: K_img,
+  L: L_img,
   O: O_img,
+  P: P_img,
+  Q: Q_img,
+  R: R_img,
   S: S_img,
   T: T_img,
   V: V_img,
@@ -201,27 +213,6 @@ export default function PredictionView({
 
   return (
     <div className="prediction-container">
-      {/* Real-time mode indicator */}
-      {isRealTimeMode && (
-        <div style={{
-          position: 'absolute',
-          top: '0.75rem',
-          right: '0.75rem',
-          padding: '0.25rem 0.5rem',
-          borderRadius: '4px',
-          backgroundColor: '#ef4444',
-          color: 'white',
-          fontSize: '0.625rem',
-          fontWeight: '700',
-          letterSpacing: '0.05em',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.25rem'
-        }}>
-          <span style={{ fontSize: '0.5rem' }}>🔴</span>
-          LIVE
-        </div>
-      )}
       
       <div className="main-result">
         <div 
@@ -235,13 +226,6 @@ export default function PredictionView({
             {prediction.letter}
           </span>
         </div>
-        
-        <div className="confidence">
-          <span className="confidence-label">{t('prediction.confidence')}</span>
-          <span className="confidence-value" style={{ color: confidenceColor }}>
-            {confidencePercent}%
-          </span>
-        </div>
       </div>
 
       {/* ASL Sign Image for single letter */}
@@ -253,28 +237,15 @@ export default function PredictionView({
             alt={`ASL sign for ${prediction.letter}`}
             className={`single-letter-sign-image ${theme === 'dark' ? 'dark-mode' : ''}`}
           />
-          <p className="sign-hint-text">
+          <p className={`sign-hint-text ${theme === 'dark' ? 'sign-hint-text--dark' : ''}`}>
             ASL Sign for "{prediction.letter}"
+          </p>
+          <p className="sign-hint-text confidence-inline" style={{ color: confidenceColor }}>
+            {confidencePercent}%
           </p>
         </div>
       )}
 
-      <div className="metadata">
-        <div className="metadata-item">
-          <span className="metadata-label">{t('prediction.samples')}:</span>
-          <span className="metadata-value">{sampleCount}</span>
-        </div>
-        <div className="metadata-item">
-          <span className="metadata-label">{t('prediction.time')}:</span>
-          <span className="metadata-value">
-            {prediction.processing_time_ms.toFixed(1)}ms
-          </span>
-        </div>
-      </div>
-
-      <p className="model-info">
-        {t('prediction.model')}: {prediction.model_name}
-      </p>
     </div>
   );
 }

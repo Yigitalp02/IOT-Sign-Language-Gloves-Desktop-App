@@ -15,6 +15,7 @@ if (!API_KEY || API_KEY === 'your-api-key-here') {
 
 export interface SensorData {
   flex_sensors: number[][];
+  imu?: [number, number, number, number]; // [w, x, y, z] — for stage-2 IMU disambiguation
   device_id?: string;
 }
 
