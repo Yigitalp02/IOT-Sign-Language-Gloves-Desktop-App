@@ -90,7 +90,12 @@ function App() {
   const webglContainerRef   = useRef<HTMLDivElement>(null);
   const [webglScale, setWebglScale] = useState(0.75); // updated by ResizeObserver
   const WEBGL_PORT = 8787;
-  const WEBGL_DIR  = 'C:\\Users\\Yigit\\Desktop\\iot-sign-language-desktop\\unity-handvis\\WebGLBuild';
+  const [webglDir, setWebglDir] = useState<string>('');
+
+  // Resolve the WebGL build path from the Tauri backend (works in both dev and bundled MSI)
+  useEffect(() => {
+    invoke<string>('get_webgl_dir').then(setWebglDir).catch(() => {});
+  }, []);
 
   // Keep WebGL scale in sync with its column width (960px native canvas → scale to fit)
   useEffect(() => {
@@ -859,7 +864,7 @@ function App() {
                 try {
                   unityRefQuatRef.current = null; // fresh IMU reference for the new session
                   pipeEmaRef.current = null;       // reset EMA buffer for new session
-                  await invoke('start_webgl_server', { dir: WEBGL_DIR, port: WEBGL_PORT });
+                  await invoke('start_webgl_server', { dir: webglDir, port: WEBGL_PORT });
                   webglEnabledRef.current = true;
                   setWebglEnabled(true);
                   setWebglServerRunning(true);
@@ -868,13 +873,15 @@ function App() {
                 }
               }
             }}
-            title={webglEnabled ? 'Hide embedded 3D Twin' : 'Embed 3D Twin inside this window'}
+            disabled={!webglEnabled && !webglDir}
+            title={webglEnabled ? 'Hide embedded 3D Twin' : !webglDir ? 'WebGL build path not found' : 'Embed 3D Twin inside this window'}
             style={{
-              padding: '0.4rem 0.9rem', borderRadius: '6px', cursor: 'pointer',
+              padding: '0.4rem 0.9rem', borderRadius: '6px', cursor: (!webglEnabled && !webglDir) ? 'not-allowed' : 'pointer',
               fontSize: '0.85rem', fontWeight: 600,
               background: webglEnabled ? 'rgba(99,102,241,0.15)' : 'rgba(16,185,129,0.08)',
               color:      webglEnabled ? '#818cf8'               : '#34d399',
               border:     `1px solid ${webglEnabled ? 'rgba(99,102,241,0.45)' : 'rgba(16,185,129,0.25)'}`,
+              opacity:    (!webglEnabled && !webglDir) ? 0.45 : 1,
             }}>
             🖼️ {webglEnabled ? 'Hide Twin (WebGL)' : 'Embed 3D Twin'}
           </button>
