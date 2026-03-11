@@ -154,6 +154,10 @@ function App() {
   // Dev: use local model instead of cloud API
   const [useLocalModel, setUseLocalModel] = useState(false);
 
+  // Stable mode: only show prediction when confidence is above threshold
+  const [stableMode, setStableMode] = useState(false);
+  const STABLE_CONFIDENCE_THRESHOLD = 0.35;
+
   // Keep ref in sync with state
   useEffect(() => {
     detectedLettersRef.current = detectedLetters;
@@ -163,6 +167,7 @@ function App() {
   useEffect(() => {
     apiService.setUseLocalModel(useLocalModel);
   }, [useLocalModel]);
+
   
   // Calibration handler
   const handleCalibrationComplete = useCallback((newBaselines: number[], newMaxbends: number[]) => {
@@ -319,7 +324,12 @@ function App() {
       debugData.apiResponse = response;
       setDebugLogData(debugData);
 
-      setCurrentPrediction(response);
+      // Stable mode: only show prediction if confidence is above threshold
+      if (!stableMode || response.confidence >= STABLE_CONFIDENCE_THRESHOLD) {
+        setCurrentPrediction(response);
+      } else {
+        setCurrentPrediction(null);
+      }
 
       // In continuous mode, add letter to word (with duplicate prevention for real-time)
       if (recognitionMode === 'continuous') {
@@ -401,7 +411,7 @@ function App() {
   // Handle sensor data from simulator
   const handleSensorData = useCallback((data: number[]) => {
     lastSampleTimeRef.current = Date.now();
-    
+
     // Update real-time display
     setCurrentSample(data);
 
@@ -768,6 +778,28 @@ function App() {
           {useLocalModel && (
             <span style={{ fontSize: '0.75rem', color: 'var(--accent-color)' }}>
               localhost:8765 (96% model) — run: cd iot-sign-glove; python scripts/serve_local_model.py
+            </span>
+          )}
+
+          <label style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            cursor: 'pointer',
+            fontSize: '0.9rem',
+            color: 'var(--text-secondary)',
+            marginLeft: '1rem'
+          }}>
+            <input
+              type="checkbox"
+              checked={stableMode}
+              onChange={(e) => setStableMode(e.target.checked)}
+            />
+            <span>Stable mode</span>
+          </label>
+          {stableMode && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--accent-color)' }}>
+              Only shows predictions with confidence ≥ {Math.round(STABLE_CONFIDENCE_THRESHOLD * 100)}%
             </span>
           )}
         </div>

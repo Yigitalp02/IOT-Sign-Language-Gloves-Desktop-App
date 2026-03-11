@@ -237,10 +237,8 @@ export default function PredictionView({
             alt={`ASL sign for ${prediction.letter}`}
             className={`single-letter-sign-image ${theme === 'dark' ? 'dark-mode' : ''}`}
           />
-          <p className={`sign-hint-text ${theme === 'dark' ? 'sign-hint-text--dark' : ''}`}>
-            ASL Sign for "{prediction.letter}"
-          </p>
           <p className="sign-hint-text confidence-inline" style={{ color: confidenceColor }}>
+            <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>Confidence: </span>
             {confidencePercent}%
           </p>
         </div>

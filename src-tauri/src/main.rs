@@ -804,8 +804,9 @@ fn stop_webgl_server(state: tauri::State<WebGLServerShared>) -> Result<(), Strin
 }
 
 // ── WiFi TCP client ───────────────────────────────────────────────────────────
-// Connects to the ESP32's TCP server (192.168.4.1:3333) and reads the same
-// CSV lines as USB serial, emitting identical "serial-data" / "serial-imu" events.
+// Connects to the ESP32's TCP server and reads the same CSV lines as USB serial,
+// emitting identical "serial-data" / "serial-imu" events.
+// Supports both IP addresses (192.168.x.x) and mDNS hostnames (glove.local).
 
 type WifiStopFlag  = Arc<AtomicBool>;
 type WifiStateShared = Arc<Mutex<Option<WifiStopFlag>>>;
@@ -827,10 +828,17 @@ fn connect_wifi(
     thread::sleep(Duration::from_millis(150));
 
     let addr = format!("{}:{}", host, port);
-    let stream = TcpStream::connect_timeout(
-        &addr.parse().map_err(|e| format!("Bad address {}: {}", addr, e))?,
-        Duration::from_secs(5),
-    ).map_err(|e| format!("Cannot connect to {}: {}", addr, e))?;
+
+    // Resolve hostname (handles both IPs and mDNS names like glove.local)
+    use std::net::ToSocketAddrs;
+    let socket_addr = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("Cannot resolve \"{}\": {}", addr, e))?
+        .next()
+        .ok_or_else(|| format!("No address found for \"{}\"", addr))?;
+
+    let stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5))
+        .map_err(|e| format!("Cannot connect to {}: {}", addr, e))?;
 
     stream.set_read_timeout(Some(Duration::from_millis(200)))
         .map_err(|e| format!("set_read_timeout: {}", e))?;

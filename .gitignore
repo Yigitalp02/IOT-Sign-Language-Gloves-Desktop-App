@@ -42,6 +42,7 @@ src-tauri/Cargo.lock
 mobile/
 ASL-ML-Inference-API/
 iot-sign-glove/
+unity-handvis/
 ASL-Deep-Learning-Model/
 Smart-Glove-Sign-Language-Predictor/
 TelerehabilitationGloves-main/

@@ -16,8 +16,8 @@ interface ConnectionManagerProps {
     onConnectionChange?: (connected: boolean) => void;
 }
 
-const WIFI_HOST = "192.168.4.1";
-const WIFI_PORT = 3333;
+const WIFI_HOST_DEFAULT = "glove.local";
+const WIFI_PORT_DEFAULT = 3333;
 
 export default function ConnectionManager({ onSensorData, onImuData, onConnectionChange }: ConnectionManagerProps) {
     const { t } = useTranslation();
@@ -30,6 +30,8 @@ export default function ConnectionManager({ onSensorData, onImuData, onConnectio
     const [mode, setMode] = useState<"serial" | "wifi">("serial");
     const [isWifiConnected, setIsWifiConnected] = useState(false);
     const [isWifiConnecting, setIsWifiConnecting] = useState(false);
+    const [wifiHost, setWifiHost] = useState(WIFI_HOST_DEFAULT);
+    const [wifiPort, setWifiPort] = useState(WIFI_PORT_DEFAULT);
     
     // Use refs to avoid re-registering event listeners on every render
     const onSensorDataRef = useRef(onSensorData);
@@ -146,7 +148,7 @@ export default function ConnectionManager({ onSensorData, onImuData, onConnectio
         } else {
             setIsWifiConnecting(true);
             try {
-                await invoke("connect_wifi", { host: WIFI_HOST, port: WIFI_PORT });
+                await invoke("connect_wifi", { host: wifiHost, port: wifiPort });
                 setIsWifiConnected(true);
                 if (onConnectionChange) onConnectionChange(true);
             } catch (err) {
@@ -214,7 +216,7 @@ export default function ConnectionManager({ onSensorData, onImuData, onConnectio
                             transition: "all 0.15s"
                         }}
                     >
-                        {m === "serial" ? "USB Serial" : "WiFi (AP)"}
+                        {m === "serial" ? "USB Serial" : "WiFi"}
                     </button>
                 ))}
             </div>
@@ -324,10 +326,47 @@ export default function ConnectionManager({ onSensorData, onImuData, onConnectio
                         lineHeight: 1.5
                     }}>
                         <strong style={{ color: "var(--text-primary)" }}>How to use WiFi:</strong><br />
-                        1. Flash the new sketch to the ESP32<br />
-                        2. On your laptop, connect to Wi-Fi network <code style={{ background: "rgba(255,255,255,0.1)", padding: "0 4px", borderRadius: 3 }}>GloveASL-WiFi</code> (password: <code style={{ background: "rgba(255,255,255,0.1)", padding: "0 4px", borderRadius: 3 }}>glove1234</code>)<br />
-                        3. Click Connect below — the app will reach ESP32 at <code style={{ background: "rgba(255,255,255,0.1)", padding: "0 4px", borderRadius: 3 }}>192.168.4.1:3333</code>
+                        1. Set your router SSID/password in the sketch and flash the ESP32<br />
+                        2. The ESP32 joins your router — your laptop stays on the same network with internet<br />
+                        3. Connect below using <code style={{ background: "rgba(255,255,255,0.1)", padding: "0 4px", borderRadius: 3 }}>glove.local</code> (mDNS) or the IP shown in Serial Monitor
                     </div>
+
+                    {/* Host / port inputs */}
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                        <input
+                            value={wifiHost}
+                            onChange={e => setWifiHost(e.target.value)}
+                            disabled={isWifiConnected}
+                            placeholder="glove.local or 192.168.x.x"
+                            style={{
+                                flex: 1,
+                                padding: "0.45rem 0.6rem",
+                                borderRadius: "8px",
+                                border: "1px solid var(--border-color)",
+                                background: "var(--input-bg)",
+                                color: "var(--text-primary)",
+                                fontSize: "0.85rem",
+                                outline: "none"
+                            }}
+                        />
+                        <input
+                            value={wifiPort}
+                            onChange={e => setWifiPort(Number(e.target.value))}
+                            disabled={isWifiConnected}
+                            type="number"
+                            style={{
+                                width: "70px",
+                                padding: "0.45rem 0.6rem",
+                                borderRadius: "8px",
+                                border: "1px solid var(--border-color)",
+                                background: "var(--input-bg)",
+                                color: "var(--text-primary)",
+                                fontSize: "0.85rem",
+                                outline: "none"
+                            }}
+                        />
+                    </div>
+
                     <button
                         onClick={handleWifiConnect}
                         disabled={isWifiConnecting}
