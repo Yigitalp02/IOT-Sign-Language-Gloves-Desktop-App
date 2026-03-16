@@ -44,7 +44,8 @@
         "width": 1200,
         "height": 900,
         "minWidth": 800,
-        "minHeight": 600
+        "minHeight": 600,
+        "additionalBrowserArgs": "--disable-application-cache --disable-offline-load-stale-cache"
       }
     ]
   }
