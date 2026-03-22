@@ -440,7 +440,7 @@ function App() {
       // IMU processing:
       //   1. Capture reference from first sample (reset when pipe/webgl restarts or user recalibrates)
       //   2. qRel     = inv(refQuat) * currentQuat   (relative rotation)
-      //   3. qRelViz  = axis remap {x←y, y←z, z←x}  (aligns BNO frame → Unity coordinate axes)
+      //   3. qRelViz  = axis remap {x←-y, y←z, z←x}  (aligns BNO frame → Unity coordinate axes; -y corrects pitch after sensor re-orientation)
       //
       // NOTE: Q_TARGET (90° X) is intentionally NOT applied here.
       // Unity's hand rig default pose already has fingers toward the camera,
@@ -453,7 +453,10 @@ function App() {
         }
         const ref     = unityRefQuatRef.current;
         const qRel    = qMult(qInv(ref), imu);
-        const qRelViz: Quat = { w: qRel.w, x: qRel.y, y: qRel.z, z: qRel.x };
+        // Axis remap for correctly-mounted BNO055 (right-side up).
+        // Negate qRel.y (→ Unity X) to fix the pitch inversion that appeared
+        // when the sensor was flipped to its correct orientation.
+        const qRelViz: Quat = { w: qRel.w, x: -qRel.y, y: qRel.z, z: -qRel.x };
         imuXYZ = [qRelViz.x, qRelViz.y, qRelViz.z];
       }
 

@@ -390,7 +390,7 @@ export default function HandVisualization3D({
       if (mag > 0.9) {
         const qC: QuaternionData = { w:w/mag, x:x/mag, y:y/mag, z:z/mag };
         const qRel = quatMultiply(quatInverse(refQuat), qC);
-        const qRelViz: QuaternionData = { w:qRel.w, x:qRel.y, y:qRel.z, z:qRel.x };
+        const qRelViz: QuaternionData = { w:qRel.w, x:-qRel.y, y:-qRel.z, z:qRel.x };
         const qFinal = quatMultiply(qRelViz, Q_TARGET);
         const mat = quaternionToMatrix(qFinal.w, qFinal.x, qFinal.y, qFinal.z);
         fingers = fingers.map(f => f.map(p => applyMatrix(mat, p)));
