@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "./context/ThemeContext";
-import ConnectionManager, { ImuData } from "./components/ConnectionManager";
+import ConnectionManager, { ImuData, MotionData } from "./components/ConnectionManager";
 import Calibrator from "./components/Calibrator";
 import PredictionView from "./components/PredictionView";
 import SensorDisplay from "./components/SensorDisplay";
@@ -68,6 +68,12 @@ function App() {
   const handleImuData = useCallback((data: ImuData) => {
     currentImuRef.current = data;
     setCurrentImu(data);
+  }, []);
+
+  // Motion data: linear acceleration + gyroscope (from 15-col firmware)
+  const currentMotionRef = useRef<MotionData | null>(null);
+  const handleMotionData = useCallback((data: MotionData) => {
+    currentMotionRef.current = data;
   }, []);
 
   // Unity Named Pipe state
@@ -465,20 +471,30 @@ function App() {
       }
 
       if (webglEnabledRef.current && webglIframeRef.current?.contentWindow) {
+        const motion = currentMotionRef.current;
         webglIframeRef.current.contentWindow.postMessage(
-          { type: 'sensorData', flex: normalizedFlex, imu: { x: imuXYZ[0], y: imuXYZ[1], z: imuXYZ[2] } },
+          {
+            type: 'sensorData',
+            flex: normalizedFlex,
+            imu: { x: imuXYZ[0], y: imuXYZ[1], z: imuXYZ[2] },
+            rawQuat: currentImuRef.current
+              ? { w: currentImuRef.current.w, x: currentImuRef.current.x, y: currentImuRef.current.y, z: currentImuRef.current.z }
+              : null,
+            motion: motion ? { lx: motion.lx, ly: motion.ly, lz: motion.lz } : null,
+            gyro:   motion ? { gx: motion.gx, gy: motion.gy, gz: motion.gz } : null,
+          },
           '*'
         );
       }
     }
     
-    // Add to data log (keep last 100 samples)
-    // Append IMU quaternion values if BNO055 is present
-    const imu = currentImuRef.current;
-    const logLine = imu
-      ? `${data.join(',')} | qw:${imu.w.toFixed(4)} qx:${imu.x.toFixed(4)} qy:${imu.y.toFixed(4)} qz:${imu.z.toFixed(4)}`
-      : data.join(',');
-    dataLogRef.current = [...dataLogRef.current, logLine].slice(-100); // Keep last 100
+    // Add to data log (keep last 100 samples) — show all parsed columns
+    const imu    = currentImuRef.current;
+    const motion = currentMotionRef.current;
+    let logLine = data.join(',');
+    if (imu)    logLine += ` | qw:${imu.w.toFixed(4)} qx:${imu.x.toFixed(4)} qy:${imu.y.toFixed(4)} qz:${imu.z.toFixed(4)}`;
+    if (motion) logLine += ` | lx:${motion.lx.toFixed(3)} ly:${motion.ly.toFixed(3)} lz:${motion.lz.toFixed(3)} gx:${motion.gx.toFixed(2)} gy:${motion.gy.toFixed(2)} gz:${motion.gz.toFixed(2)}`;
+    dataLogRef.current = [...dataLogRef.current, logLine].slice(-100);
     setDataLog(dataLogRef.current);
 
     // If recording for data collection, add sample to recording buffer
@@ -908,6 +924,7 @@ function App() {
         <ConnectionManager 
           onSensorData={handleSensorData}
           onImuData={handleImuData}
+          onMotionData={handleMotionData}
           onConnectionChange={(connected) => {
             setConnectedDevice(connected ? 'serial-device' : null);
             
@@ -1262,7 +1279,7 @@ function App() {
               color: 'var(--text-secondary)', 
               margin: '0.75rem 0 0 0' 
             }}>
-              Format: Thumb, Index, Middle, Ring, Pinky (same as Serial Monitor)
+              Cols: Thumb, Index, Middle, Ring, Pinky | qw qx qy qz | lx ly lz (linear accel m/s²) | gx gy gz (gyro deg/s)
             </p>
           </div>
         )}

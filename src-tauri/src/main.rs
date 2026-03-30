@@ -582,12 +582,34 @@ fn start_reading_serial(
                                 continue;
                             }
                             
-                            // Parse: "2880,1910,2127,2295,2335" (5 values, no IMU)
-                            //     or "2880,1910,2127,2295,2335,1.0000,0.0000,0.0000,0.0000" (9 values, with IMU)
+                            // Parse CSV formats:
+                            //   5  cols: "flex×5"                          (legacy)
+                            //   9  cols: "flex×5, qw,qx,qy,qz"            (v3)
+                            //   15 cols: "flex×5, qw,qx,qy,qz, lx,ly,lz, gx,gy,gz" (v4 motion)
                             let values: Vec<&str> = line.split(',').collect();
-                            
-                            if values.len() == 9 {
-                                // New format: 5 thermistors + 4 quaternion floats (w, x, y, z)
+
+                            if values.len() == 15 {
+                                let thermistors: Vec<i32> = values[..5]
+                                    .iter()
+                                    .filter_map(|s| s.trim().parse::<i32>().ok())
+                                    .collect();
+                                let floats: Vec<f32> = values[5..]
+                                    .iter()
+                                    .filter_map(|s| s.trim().parse::<f32>().ok())
+                                    .collect();
+                                if thermistors.len() == 5 && floats.len() == 10 {
+                                    let _ = window.emit("serial-data", &thermistors);
+                                    let _ = window.emit("serial-imu", serde_json::json!({
+                                        "w": floats[0], "x": floats[1],
+                                        "y": floats[2], "z": floats[3]
+                                    }));
+                                    let _ = window.emit("serial-motion", serde_json::json!({
+                                        "lx": floats[4], "ly": floats[5], "lz": floats[6],
+                                        "gx": floats[7], "gy": floats[8], "gz": floats[9]
+                                    }));
+                                }
+                            } else if values.len() == 9 {
+                                // v3 format: 5 thermistors + 4 quaternion floats (w, x, y, z)
                                 let thermistors: Vec<i32> = values[..5]
                                     .iter()
                                     .filter_map(|s| s.trim().parse::<i32>().ok())
@@ -598,16 +620,11 @@ fn start_reading_serial(
                                     .collect();
                                 
                                 if thermistors.len() == 5 && quats.len() == 4 {
-                                    // Emit thermistor data (same event as before for backward compat)
                                     let _ = window.emit("serial-data", &thermistors);
-                                    // Emit IMU quaternion as a separate event
-                                    let imu_payload = serde_json::json!({
-                                        "w": quats[0],
-                                        "x": quats[1],
-                                        "y": quats[2],
-                                        "z": quats[3]
-                                    });
-                                    let _ = window.emit("serial-imu", imu_payload);
+                                    let _ = window.emit("serial-imu", serde_json::json!({
+                                        "w": quats[0], "x": quats[1],
+                                        "y": quats[2], "z": quats[3]
+                                    }));
                                 }
                             } else if values.len() == 5 {
                                 // Legacy format: 5 thermistor values only
@@ -616,7 +633,6 @@ fn start_reading_serial(
                                     .filter_map(|s| s.trim().parse::<i32>().ok())
                                     .collect();
                                 
-                                // Only emit if we successfully parsed all 5 values
                                 if parsed.len() == 5 {
                                     let _ = window.emit("serial-data", parsed);
                                 }
@@ -884,18 +900,33 @@ fn connect_wifi(
 
                     // Same parsing as the serial thread so the same React callbacks fire
                     let values: Vec<&str> = trimmed.split(',').collect();
-                    if values.len() == 9 {
+                    if values.len() == 15 {
+                        let thermistors: Vec<i32> = values[..5]
+                            .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
+                        let floats: Vec<f32> = values[5..]
+                            .iter().filter_map(|s| s.trim().parse::<f32>().ok()).collect();
+                        if thermistors.len() == 5 && floats.len() == 10 {
+                            let _ = window.emit("serial-data", &thermistors);
+                            let _ = window.emit("serial-imu", serde_json::json!({
+                                "w": floats[0], "x": floats[1],
+                                "y": floats[2], "z": floats[3]
+                            }));
+                            let _ = window.emit("serial-motion", serde_json::json!({
+                                "lx": floats[4], "ly": floats[5], "lz": floats[6],
+                                "gx": floats[7], "gy": floats[8], "gz": floats[9]
+                            }));
+                        }
+                    } else if values.len() == 9 {
                         let thermistors: Vec<i32> = values[..5]
                             .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
                         let quats: Vec<f32> = values[5..]
                             .iter().filter_map(|s| s.trim().parse::<f32>().ok()).collect();
                         if thermistors.len() == 5 && quats.len() == 4 {
                             let _ = window.emit("serial-data", &thermistors);
-                            let imu_payload = serde_json::json!({
+                            let _ = window.emit("serial-imu", serde_json::json!({
                                 "w": quats[0], "x": quats[1],
                                 "y": quats[2], "z": quats[3]
-                            });
-                            let _ = window.emit("serial-imu", imu_payload);
+                            }));
                         }
                     } else if values.len() == 5 {
                         let parsed: Vec<i32> = values

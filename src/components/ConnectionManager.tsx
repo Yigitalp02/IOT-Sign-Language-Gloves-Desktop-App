@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
@@ -10,16 +10,22 @@ export interface ImuData {
     z: number;
 }
 
+export interface MotionData {
+    lx: number; ly: number; lz: number; // linear acceleration [m/s²]
+    gx: number; gy: number; gz: number; // angular velocity    [deg/s]
+}
+
 interface ConnectionManagerProps {
     onSensorData?: (data: number[]) => void;
     onImuData?: (data: ImuData) => void;
+    onMotionData?: (data: MotionData) => void;
     onConnectionChange?: (connected: boolean) => void;
 }
 
 const WIFI_HOST_DEFAULT = "glove.local";
 const WIFI_PORT_DEFAULT = 3333;
 
-export default function ConnectionManager({ onSensorData, onImuData, onConnectionChange }: ConnectionManagerProps) {
+export default function ConnectionManager({ onSensorData, onImuData, onMotionData, onConnectionChange }: ConnectionManagerProps): React.JSX.Element {
     const { t } = useTranslation();
     const [ports, setPorts] = useState<string[]>([]);
     const [selectedPort, setSelectedPort] = useState<string>("");
@@ -36,12 +42,10 @@ export default function ConnectionManager({ onSensorData, onImuData, onConnectio
     // Use refs to avoid re-registering event listeners on every render
     const onSensorDataRef = useRef(onSensorData);
     const onImuDataRef = useRef(onImuData);
-    useEffect(() => {
-        onSensorDataRef.current = onSensorData;
-    }, [onSensorData]);
-    useEffect(() => {
-        onImuDataRef.current = onImuData;
-    }, [onImuData]);
+    const onMotionDataRef = useRef(onMotionData);
+    useEffect(() => { onSensorDataRef.current = onSensorData; }, [onSensorData]);
+    useEffect(() => { onImuDataRef.current = onImuData; }, [onImuData]);
+    useEffect(() => { onMotionDataRef.current = onMotionData; }, [onMotionData]);
 
     const scanPorts = async () => {
         setIsScanning(true);
@@ -76,10 +80,18 @@ export default function ConnectionManager({ onSensorData, onImuData, onConnectio
                 onImuDataRef.current(event.payload);
             }
         });
+
+        // Listen for motion events (linear accel + gyro, emitted when 15-col format detected)
+        const unlistenMotion = listen<MotionData>("serial-motion", (event) => {
+            if (onMotionDataRef.current) {
+                onMotionDataRef.current(event.payload);
+            }
+        });
         
         return () => {
             unlistenSensor.then(f => f());
             unlistenImu.then(f => f());
+            unlistenMotion.then(f => f());
         };
     }, []); // Empty deps - only register once
 
