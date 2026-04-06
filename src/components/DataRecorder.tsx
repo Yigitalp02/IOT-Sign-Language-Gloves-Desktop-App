@@ -11,23 +11,35 @@ interface DataRecorderProps {
   isConnected: boolean;
 }
 
-// Flex-only letters — orientation doesn't matter, model uses random quaternion augmentation
-const ASL_LETTERS_FLEX  = ['A', 'B', 'C', 'E', 'F', 'I', 'O', 'S', 'T', 'V', 'W', 'X', 'Y'];
-// IMU-required letters — must be recorded with BNO055 connected at specific orientation
-// D and K re-recorded with IMU so model can distinguish them from G and P respectively
-const ASL_LETTERS_IMU   = ['D', 'K', 'G', 'H', 'L', 'P', 'Q', 'R'];
+// Flex-only letters — orientation doesn't matter for these
+const ASL_LETTERS_FLEX = ['B', 'C', 'F', 'I', 'O', 'W', 'X', 'Y'];
+// IMU-required letters — must be recorded with BNO055 at a specific orientation
+// Families: VHRU, AT, ES, DG, LPQ — gravity features separate each family member
+const ASL_LETTERS_IMU  = ['V', 'H', 'R', 'U', 'A', 'T', 'E', 'S', 'D', 'K', 'G', 'L', 'P', 'Q'];
 
 // LEFT-HAND specific orientation hints for IMU-dependent letters
 // (standard ASL descriptions are for right hand; left hand is the mirror)
 const LEFT_HAND_HINTS: Record<string, string> = {
-  D: 'Palm forward, index pointing UP — normal D position. Distinguishes D from G.',
-  K: 'Palm forward, K shape pointing UP — normal K position. Distinguishes K from P.',
-  G: 'Index points LEFT (sideways). Thumb parallel to index. Wrist rotated ~90° outward.',
+  // VHRU family
+  V: 'Palm facing FORWARD, index + middle spread apart pointing UP. Normal "peace sign" position.',
   H: 'Index + middle point LEFT (sideways), together. Wrist rotated ~90° outward.',
+  R: 'Index + middle crossed, pointing DOWNWARD — flip hand so fingertips face the floor.',
+  U: 'Palm facing TOWARD YOU (inward), index + middle together pointing UP. Wrist rolled inward ~90°.',
+  // AT family
+  A: 'Closed fist, thumb resting on the SIDE of the fingers. Palm facing outward/forward.',
+  T: 'Closed fist, thumb tucked BETWEEN index and middle fingers. Palm facing outward/forward.',
+  // ES family
+  E: 'All fingers curled tightly, fingertips touching palm. Thumb tucked under. Palm facing OUTWARD.',
+  S: 'Closed fist, thumb crossing OVER the front of all fingers. Palm facing outward.',
+  // DG family
+  D: 'Palm forward, index pointing UP — normal D position. Distinguishes D from G.',
+  G: 'Index points LEFT (sideways). Thumb parallel to index. Wrist rotated ~90° outward.',
+  // KP family (K used standalone here)
+  K: 'Palm forward, K shape pointing UP — normal K position.',
+  // LPQ family
   L: 'Thumb up + index pointing forward. "L" shape. Other fingers bent.',
   P: 'Like K but tilt hand DOWN — fingertips point toward floor.',
   Q: 'Like G but tilt hand DOWN — index points toward floor.',
-  R: 'Index + middle crossed, pointing DOWNWARD — flip hand so fingertips face the floor. Distinguishes R from V.',
 };
 
 export default function DataRecorder({
@@ -197,8 +209,10 @@ export default function DataRecorder({
           <li>Make the ASL sign and hold it steady for 3 seconds</li>
           <li>Record each letter 10–15 times with slight position variations</li>
           <li>Vary: hand angle, finger tightness, wrist rotation</li>
-          <li>For IMU letters (D, K, G, H, L, P, Q, R): exaggerate the wrist orientation — the model relies on it</li>
-          <li>R must point DOWNWARD (flipped), V points upward — this is what separates them</li>
+          <li>For IMU letters: exaggerate the wrist orientation — the model relies on it to separate family members</li>
+          <li>V vs U: V palm faces forward, U palm faces toward you — keep wrist locked while recording U</li>
+          <li>A vs T: same fist shape, thumb position is different — hold very still</li>
+          <li>E vs S: both closed fists, different thumb placement — exaggerate the difference</li>
           <li>CSV columns: <code>label, ch0–ch4 (normalised), qw, qx, qy, qz</code></li>
         </ul>
       </div>

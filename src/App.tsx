@@ -152,7 +152,8 @@ function App() {
   const [detectedLetters, setDetectedLetters] = useState<string[]>([]);
   const detectedLettersRef = useRef<string[]>([]);
   const [recognitionMode, setRecognitionMode] = useState<'manual' | 'single' | 'continuous'>('manual');
-  const [minConfidence] = useState(0.6); // Removed unused setter
+  const [minConfidence, setMinConfidence] = useState(0.6);
+  const [duplicateWindowMs, setDuplicateWindowMs] = useState(500);
   const [isWordFinalized, setIsWordFinalized] = useState(false);
 
   // Real-time prediction state (for continuous streaming)
@@ -347,9 +348,9 @@ function App() {
         const currentTime = Date.now();
         const timeSinceLastPrediction = currentTime - lastPredictionTimeRef.current;
         
-        // Only add if it's a different letter OR enough time has passed (500ms)
+        // Only add if it's a different letter OR enough time has passed
         const isDifferentLetter = response.letter !== lastPredictedLetterRef.current;
-        const enoughTimePassed = timeSinceLastPrediction > 500;
+        const enoughTimePassed = timeSinceLastPrediction > duplicateWindowMs;
         
         if (isWordFinalized) {
           console.log('[App] Word was finalized, clearing and starting new word');
@@ -412,7 +413,7 @@ function App() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [recognitionMode, minConfidence, isSimulating, isWordFinalized, baselines, maxbends]);
+  }, [recognitionMode, minConfidence, duplicateWindowMs, isSimulating, isWordFinalized, baselines, maxbends]);
 
   const makePredictionRef = useRef(makePrediction);
   useEffect(() => {
@@ -1013,6 +1014,72 @@ function App() {
               : '🔴 LIVE: Real-time predictions building words. Updates 5x per second - hold each letter steady!'}
           </p>
         </div>
+
+        {/* Continuous mode tuning controls */}
+        {recognitionMode === 'continuous' && (
+          <div style={{
+            background: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '10px',
+            padding: '1rem 1.25rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.85rem'
+          }}>
+            <p style={{ margin: 0, fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+              Continuous Mode Settings
+            </p>
+
+            {/* Confidence threshold */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  Min Confidence to add letter
+                </label>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-color)' }}>
+                  {Math.round(minConfidence * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0.1} max={0.95} step={0.05}
+                value={minConfidence}
+                onChange={e => setMinConfidence(parseFloat(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--accent-color)' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                <span>10% (lenient)</span>
+                <span>95% (strict)</span>
+              </div>
+            </div>
+
+            {/* Duplicate window */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  Same-letter repeat window
+                </label>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-color)' }}>
+                  {duplicateWindowMs} ms
+                </span>
+              </div>
+              <input
+                type="range"
+                min={200} max={2000} step={100}
+                value={duplicateWindowMs}
+                onChange={e => setDuplicateWindowMs(parseInt(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--accent-color)' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                <span>200ms (fast)</span>
+                <span>2000ms (slow)</span>
+              </div>
+              <p style={{ margin: '0.3rem 0 0 0', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                How long the same letter must be held before it can be added again.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* WebGL 3D Twin + Prediction View side by side */}
         {webglEnabled && (
