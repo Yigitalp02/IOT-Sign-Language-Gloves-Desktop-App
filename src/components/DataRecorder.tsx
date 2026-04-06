@@ -20,11 +20,10 @@ const ASL_LETTERS_IMU  = ['V', 'H', 'R', 'U', 'A', 'T', 'E', 'S', 'D', 'K', 'G',
 // LEFT-HAND specific orientation hints for IMU-dependent letters
 // (standard ASL descriptions are for right hand; left hand is the mirror)
 const LEFT_HAND_HINTS: Record<string, string> = {
-  // VHRU family
+  // VHR family
   V: 'Palm facing FORWARD, index + middle spread apart pointing UP. Normal "peace sign" position.',
   H: 'Index + middle point LEFT (sideways), together. Wrist rotated ~90° outward.',
   R: 'Index + middle crossed, pointing DOWNWARD — flip hand so fingertips face the floor.',
-  U: 'Palm facing TOWARD YOU (inward), index + middle together pointing UP. Wrist rolled inward ~90°.',
   // AT family
   A: 'Closed fist, thumb resting on the SIDE of the fingers. Palm facing outward/forward.',
   T: 'Closed fist, thumb tucked BETWEEN index and middle fingers. Palm facing outward/forward.',
@@ -34,8 +33,9 @@ const LEFT_HAND_HINTS: Record<string, string> = {
   // DG family
   D: 'Palm forward, index pointing UP — normal D position. Distinguishes D from G.',
   G: 'Index points LEFT (sideways). Thumb parallel to index. Wrist rotated ~90° outward.',
-  // KP family (K used standalone here)
-  K: 'Palm forward, K shape pointing UP — normal K position.',
+  // KU family
+  K: 'Wrist rolled outward, K shape pointing to the SIDE — strong wrist roll. Distinguishes K from U.',
+  U: 'Palm facing TOWARD YOU (inward), index + middle together pointing UP. Wrist rolled inward ~90°.',
   // LPQ family
   L: 'Thumb up + index pointing forward. "L" shape. Other fingers bent.',
   P: 'Like K but tilt hand DOWN — fingertips point toward floor.',
