@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import './DataRecorder.css';
 
@@ -34,7 +35,7 @@ const LEFT_HAND_HINTS: Record<string, string> = {
   D: 'Palm forward, index pointing UP — normal D position. Distinguishes D from G.',
   G: 'Index points LEFT (sideways). Thumb parallel to index. Wrist rotated ~90° outward.',
   // KU family
-  K: 'Wrist rolled outward, K shape pointing to the SIDE — strong wrist roll. Distinguishes K from U.',
+  K: 'Hold K exactly how you naturally sign it in everyday use — do NOT adjust based on this hint. Watch the serial log while holding K; record only when the quaternion matches your live prediction session.',
   U: 'Palm facing TOWARD YOU (inward), index + middle together pointing UP. Wrist rolled inward ~90°.',
   // LPQ family
   L: 'Thumb up + index pointing forward. "L" shape. Other fingers bent.',
@@ -50,6 +51,7 @@ export default function DataRecorder({
   targetSamples,
   isConnected
 }: DataRecorderProps) {
+  const { t } = useTranslation();
   const { theme } = useTheme();
   const [selectedLetter, setSelectedLetter] = useState('A');
 
@@ -67,21 +69,21 @@ export default function DataRecorder({
     <div className="data-recorder-container" style={{ backgroundColor: bgCard, borderColor: borderColor }}>
       <div className="data-recorder-header">
         <h3 className="data-recorder-title" style={{ color: textPrimary }}>
-          📊 Data Recording for Training
+          {t('recorder.title')}
         </h3>
         {!isConnected && (
           <p className="warning-text" style={{ color: '#fb923c' }}>
-            ⚠️ Connect glove first!
+            {t('recorder.connect_first')}
           </p>
         )}
       </div>
 
       <div className="recording-info" style={{ backgroundColor: bgSecondary, borderColor: borderColor }}>
         <p style={{ color: textSecondary, marginBottom: '0.5rem' }}>
-          Collect labeled samples for each ASL letter. <strong style={{ color: textPrimary }}>Left-hand glove</strong> — signs are mirrored from standard ASL diagrams.
+          {t('recorder.description')} <strong style={{ color: textPrimary }}>{t('recorder.left_hand')}</strong> {t('recorder.left_hand_note')}
         </p>
         <p style={{ color: textSecondary, fontSize: '0.85rem' }}>
-          <strong>Best Practice:</strong> Record 10–15 sessions per letter, varying hand position slightly each time. IMU data is captured automatically when the BNO055 is connected.
+          <strong>{t('recorder.best_practice')}</strong> {t('recorder.best_practice_desc')}
         </p>
       </div>
 
@@ -89,11 +91,11 @@ export default function DataRecorder({
         <>
           <div className="letter-selector">
             <label style={{ color: textPrimary, fontWeight: 600, marginBottom: '0.5rem', display: 'block' }}>
-              Select Letter to Record:
+              {t('recorder.select_letter')}
             </label>
 
             {/* Flex-only letters */}
-            <p style={{ color: textSecondary, fontSize: '0.8rem', marginBottom: '0.25rem' }}>Flex sensors only</p>
+            <p style={{ color: textSecondary, fontSize: '0.8rem', marginBottom: '0.25rem' }}>{t('recorder.flex_only')}</p>
             <div className="letter-grid" style={{ marginBottom: '0.75rem' }}>
               {ASL_LETTERS_FLEX.map(letter => (
                 <button
@@ -113,7 +115,7 @@ export default function DataRecorder({
 
             {/* IMU-dependent letters */}
             <p style={{ color: textSecondary, fontSize: '0.8rem', marginBottom: '0.25rem' }}>
-              Flex + IMU orientation <span style={{ color: '#3b82f6', fontWeight: 600 }}>(BNO055 required)</span>
+              {t('recorder.flex_imu')} <span style={{ color: '#3b82f6', fontWeight: 600 }}>{t('recorder.bno_required')}</span>
             </p>
             <div className="letter-grid" style={{ marginBottom: '0.5rem' }}>
               {ASL_LETTERS_IMU.map(letter => (
@@ -143,7 +145,7 @@ export default function DataRecorder({
                 marginTop: '0.25rem',
               }}>
                 <p style={{ color: '#3b82f6', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.2rem' }}>
-                  Left-hand orientation for "{selectedLetter}":
+                  {t('recorder.orientation_hint', { letter: selectedLetter })}
                 </p>
                 <p style={{ color: textSecondary, fontSize: '0.82rem', margin: 0 }}>
                   {LEFT_HAND_HINTS[selectedLetter]}
@@ -161,7 +163,7 @@ export default function DataRecorder({
             onClick={() => isConnected && onStartRecording(selectedLetter)}
             disabled={!isConnected}
           >
-            Start Recording "{selectedLetter}"
+            {t('recorder.start_recording', { letter: selectedLetter })}
           </button>
         </>
       ) : (
@@ -169,7 +171,7 @@ export default function DataRecorder({
           <div className="recording-banner" style={{ backgroundColor: '#ef4444' + '20', borderColor: '#ef4444' }}>
             <span className="recording-pulse" style={{ backgroundColor: '#ef4444' }}></span>
             <p style={{ color: '#ef4444', fontWeight: 600 }}>
-              Recording "{selectedLetter}" — Hold the sign steady!
+              {t('recorder.recording_active', { letter: selectedLetter })}
               {LEFT_HAND_HINTS[selectedLetter] && (
                 <span style={{ display: 'block', fontWeight: 400, fontSize: '0.82rem', marginTop: '0.2rem', color: '#fb923c' }}>
                   {LEFT_HAND_HINTS[selectedLetter]}
@@ -189,7 +191,7 @@ export default function DataRecorder({
               />
             </div>
             <p className="progress-text" style={{ color: textPrimary }}>
-              {recordedSamples} / {targetSamples} samples ({Math.round(progress)}%)
+              {t('recorder.samples_progress', { recorded: recordedSamples, target: targetSamples, percent: Math.round(progress) })}
             </p>
           </div>
 
@@ -198,22 +200,22 @@ export default function DataRecorder({
             style={{ backgroundColor: '#6b7280' }}
             onClick={onStopRecording}
           >
-            ⏹ Stop Recording
+            {t('recorder.stop_recording')}
           </button>
         </div>
       )}
 
       <div className="tips-section" style={{ backgroundColor: bgSecondary, borderColor: borderColor }}>
-        <p style={{ color: textSecondary, fontWeight: 600, marginBottom: '0.5rem' }}>Recording Tips:</p>
+        <p style={{ color: textSecondary, fontWeight: 600, marginBottom: '0.5rem' }}>{t('recorder.tips_title')}</p>
         <ul style={{ color: textSecondary, fontSize: '0.85rem', paddingLeft: '1.5rem' }}>
-          <li>Make the ASL sign and hold it steady for 3 seconds</li>
-          <li>Record each letter 10–15 times with slight position variations</li>
-          <li>Vary: hand angle, finger tightness, wrist rotation</li>
-          <li>For IMU letters: exaggerate the wrist orientation — the model relies on it to separate family members</li>
-          <li>V vs U: V palm faces forward, U palm faces toward you — keep wrist locked while recording U</li>
-          <li>A vs T: same fist shape, thumb position is different — hold very still</li>
-          <li>E vs S: both closed fists, different thumb placement — exaggerate the difference</li>
-          <li>CSV columns: <code>label, ch0–ch4 (normalised), qw, qx, qy, qz</code></li>
+          <li>{t('recorder.tip1')}</li>
+          <li>{t('recorder.tip2')}</li>
+          <li>{t('recorder.tip3')}</li>
+          <li>{t('recorder.tip4')}</li>
+          <li>{t('recorder.tip5')}</li>
+          <li>{t('recorder.tip6')}</li>
+          <li>{t('recorder.tip7')}</li>
+          <li><code>{t('recorder.tip8')}</code></li>
         </ul>
       </div>
     </div>

@@ -6,6 +6,7 @@ import ConnectionManager, { ImuData, MotionData } from "./components/ConnectionM
 import Calibrator from "./components/Calibrator";
 import PredictionView from "./components/PredictionView";
 import SensorDisplay from "./components/SensorDisplay";
+import FlexGraph from "./components/FlexGraph";
 import HandVisualization3D from "./components/HandVisualization3D";
 import DebugLog from "./components/DebugLog";
 import DataRecorder from "./components/DataRecorder";
@@ -29,8 +30,8 @@ const qMult = (a: Quat, b: Quat): Quat => ({
 const qInv  = (q: Quat): Quat => ({ w: q.w, x: -q.x, y: -q.y, z: -q.z });
 // Fallback calibration used when the user has never run the calibrator.
 // These match SimulatorControl and have a proper wide range per finger.
-const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
-const SIMULATOR_MAXBENDS  = [2200, 1300, 1480, 1640, 1720];
+const SIMULATOR_BASELINES = [1560, 7070, 6130, 6560, 5880];
+const SIMULATOR_MAXBENDS  = [1160, 4670, 4730, 4700, 4190];
 
 // Removed unused interface PredictionRecord
 
@@ -76,10 +77,6 @@ function App() {
     currentMotionRef.current = data;
   }, []);
 
-  // Unity Named Pipe state
-  const [unityPipeEnabled, setUnityPipeEnabled] = useState(false);
-  const [unityConnected,   setUnityConnected]   = useState(false);
-  const unityPipeEnabledRef = useRef(false);
   // EMA (Exponential Moving Average) buffer for smoothing data sent to Unity/WebGL
   // Applied to raw ADC values before normalization — lower alpha = smoother but laggier
   const PIPE_EMA_ALPHA = 0.25; // 0=frozen, 1=raw — 0.25 gives ~4-sample smoothing
@@ -95,6 +92,7 @@ function App() {
   const webglIframeRef      = useRef<HTMLIFrameElement>(null);
   const webglContainerRef   = useRef<HTMLDivElement>(null);
   const [webglScale, setWebglScale] = useState(0.75); // updated by ResizeObserver
+  const [webglKey, setWebglKey] = useState(0); // increment to force iframe remount
   const WEBGL_PORT = 8787;
   const [webglDir, setWebglDir] = useState<string>('');
 
@@ -102,6 +100,25 @@ function App() {
   useEffect(() => {
     invoke<string>('get_webgl_dir').then(setWebglDir).catch(() => {});
   }, []);
+
+  // Auto-start the WebGL server as soon as the build path is known
+  const webglAutoStarted = useRef(false);
+  useEffect(() => {
+    if (!webglDir || webglAutoStarted.current) return;
+    webglAutoStarted.current = true;
+    (async () => {
+      try {
+        unityRefQuatRef.current = null;
+        pipeEmaRef.current = null;
+        await invoke('start_webgl_server', { dir: webglDir, port: WEBGL_PORT });
+        webglEnabledRef.current = true;
+        setWebglEnabled(true);
+        setWebglServerRunning(true);
+      } catch {
+        // silently ignore — user can still enable manually via the button
+      }
+    })();
+  }, [webglDir]);
 
   // Keep WebGL scale in sync with its column width (960px native canvas → scale to fit)
   useEffect(() => {
@@ -114,17 +131,6 @@ function App() {
     return () => observer.disconnect();
   }, [webglEnabled]);
 
-  // Poll pipe connection status while enabled
-  useEffect(() => {
-    if (!unityPipeEnabled) return;
-    const id = setInterval(async () => {
-      try {
-        const s = await invoke<{ running: boolean; connected: boolean }>('unity_pipe_status');
-        setUnityConnected(s.connected);
-      } catch { /* ignore */ }
-    }, 1000);
-    return () => clearInterval(id);
-  }, [unityPipeEnabled]);
   
   // Data log for debugging (stores last 100 samples)
   const [dataLog, setDataLog] = useState<string[]>([]);
@@ -140,18 +146,26 @@ function App() {
   const [connectedDevice, setConnectedDevice] = useState<string | null>(null);
 
   // Calibration state
-  const [baselines, setBaselines] = useState<number[]>(DEFAULT_BASELINES);
-  const [maxbends, setMaxbends] = useState<number[]>(DEFAULT_MAXBENDS);
+  const [baselines, setBaselines] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem('glove_baselines');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_BASELINES;
+  });
+  const [maxbends, setMaxbends] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem('glove_maxbends');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_MAXBENDS;
+  });
 
-  // Manual prediction recording
-  const [isRecordingPrediction, setIsRecordingPrediction] = useState(false);
-  const isRecordingPredictionRef = useRef(false);
-  const [predictionProgress, setPredictionProgress] = useState(0);
 
   // Continuous mode state
   const [detectedLetters, setDetectedLetters] = useState<string[]>([]);
   const detectedLettersRef = useRef<string[]>([]);
-  const [recognitionMode, setRecognitionMode] = useState<'manual' | 'single' | 'continuous'>('manual');
+  const [recognitionMode, setRecognitionMode] = useState<'single' | 'continuous'>('single');
   const [minConfidence, setMinConfidence] = useState(0.6);
   const [duplicateWindowMs, setDuplicateWindowMs] = useState(500);
   const [isWordFinalized, setIsWordFinalized] = useState(false);
@@ -165,6 +179,7 @@ function App() {
 
   // Dev: use local model instead of cloud API
   const [useLocalModel, setUseLocalModel] = useState(false);
+  const [pythonServerStatus, setPythonServerStatus] = useState<'off' | 'starting' | 'running' | 'error'>('off');
 
   // Stable mode: only show prediction when confidence is above threshold
   const [stableMode, setStableMode] = useState(false);
@@ -175,10 +190,99 @@ function App() {
     detectedLettersRef.current = detectedLetters;
   }, [detectedLetters]);
 
-  // Sync local model switch with apiService
+  // Ref so prediction callbacks can gate themselves without stale closure issues
+  const pythonServerReadyRef = useRef(false);
+
+  // Sync local model switch with apiService + auto-start/stop the Python server
   useEffect(() => {
     apiService.setUseLocalModel(useLocalModel);
+
+    if (useLocalModel) {
+      setPythonServerStatus('starting');
+      pythonServerReadyRef.current = false;
+
+      invoke<string>('start_python_server')
+        .then((msg) => {
+          console.log('[App]', msg);
+
+          // Process is spawned — poll /health until the server is actually ready
+          const POLL_INTERVAL_MS = 800;
+          const TIMEOUT_MS       = 60_000; // RF model load can take up to ~45 s on slow machines
+          const started          = Date.now();
+
+          const showError = async (reason: string) => {
+            pythonServerReadyRef.current = false;
+            setPythonServerStatus('error');
+            const output = await invoke<string>('python_server_output').catch(() => '');
+            const detail = output.trim()
+              ? `\n\nPython output:\n${output.slice(-1500)}` // last 1500 chars
+              : '\n\n(No output captured — process may have failed to start)';
+            console.error(`[App] Python server error: ${reason}${detail}`);
+            alert(`Model server failed to start:\n${reason}${detail}`);
+            setUseLocalModel(false);
+          };
+
+          const poll = async () => {
+            if (!apiService.getUseLocalModel()) return; // user toggled off
+
+            // Check if process already died (crash before uvicorn bound the port)
+            const alive = await invoke<boolean>('python_server_status').catch(() => false);
+            if (!alive) {
+              await showError('The Python process exited unexpectedly before the server was ready.');
+              return;
+            }
+
+            if (Date.now() - started > TIMEOUT_MS) {
+              await showError(`Server did not respond within ${TIMEOUT_MS / 1000} s.`);
+              return;
+            }
+
+            try {
+              await apiService.checkHealth(true); // silent: suppress per-attempt console errors
+              console.log('[App] Python model server is ready ✓');
+              pythonServerReadyRef.current = true;
+              setPythonServerStatus('running');
+            } catch {
+              setTimeout(poll, POLL_INTERVAL_MS); // not ready yet — retry
+            }
+          };
+
+          setTimeout(poll, POLL_INTERVAL_MS);
+        })
+        .catch(async (e: unknown) => {
+          console.error('[App] Python server failed to spawn:', e);
+          pythonServerReadyRef.current = false;
+          setPythonServerStatus('error');
+          alert(`Could not launch model server:\n${String(e)}`);
+          setUseLocalModel(false);
+        });
+    } else {
+      invoke('stop_python_server').catch(() => {});
+      pythonServerReadyRef.current = false;
+      setPythonServerStatus('off');
+    }
   }, [useLocalModel]);
+
+  // Poll the OS-level process status every 4 s when running (detects unexpected crashes)
+  useEffect(() => {
+    if (pythonServerStatus !== 'running') return;
+    const id = setInterval(async () => {
+      try {
+        const alive = await invoke<boolean>('python_server_status');
+        if (!alive) {
+          console.warn('[App] Python server process exited unexpectedly');
+          pythonServerReadyRef.current = false;
+          setPythonServerStatus('error');
+        }
+      } catch { /* ignore */ }
+    }, 4000);
+    return () => clearInterval(id);
+  }, [pythonServerStatus]);
+
+  // Kill the Python server when the app window is closed
+  useEffect(() => {
+    return () => { invoke('stop_python_server').catch(() => {}); };
+  }, []);
 
   
   // Calibration handler
@@ -190,8 +294,13 @@ function App() {
     // Update state for normalization
     setBaselines(newBaselines);
     setMaxbends(newMaxbends);
-    
-    // Don't use alert() - it's blocked by Tauri
+
+    // Persist so calibration survives app restarts
+    try {
+      localStorage.setItem('glove_baselines', JSON.stringify(newBaselines));
+      localStorage.setItem('glove_maxbends', JSON.stringify(newMaxbends));
+    } catch {}
+
     console.log(`Calibration Applied! Baselines: [${newBaselines.join(', ')}] Maxbends: [${newMaxbends.join(', ')}]`);
   }, []);
 
@@ -275,6 +384,13 @@ function App() {
   }, [recognitionMode, isSimulating, connectedDevice, detectedLetters, isWordFinalized]);
 
   const makePrediction = useCallback(async (samples: number[][]) => {
+    // Guard: if local model is selected but the server isn't ready yet, skip silently.
+    // This prevents ERR_CONNECTION_REFUSED errors during the boot window.
+    if (apiService.getUseLocalModel() && !pythonServerReadyRef.current) {
+      console.log('[App] Skipping prediction — local server not ready yet');
+      return;
+    }
+
     const simulationEndTime = Date.now();
     const apiCallTime = Date.now();
     
@@ -427,8 +543,8 @@ function App() {
     // Update real-time display
     setCurrentSample(data);
 
-    // Forward normalized data to Unity (Named Pipe and/or WebGL twin)
-    const needsTwinData = (unityPipeEnabledRef.current || webglEnabledRef.current) && data.length >= 5;
+    // Forward normalized data to WebGL twin
+    const needsTwinData = webglEnabledRef.current && data.length >= 5;
     if (needsTwinData) {
       // Apply EMA smoothing to raw ADC values before normalization
       const raw5 = data.slice(0, 5);
@@ -465,10 +581,6 @@ function App() {
         // when the sensor was flipped to its correct orientation.
         const qRelViz: Quat = { w: qRel.w, x: -qRel.y, y: qRel.z, z: -qRel.x };
         imuXYZ = [qRelViz.x, qRelViz.y, qRelViz.z];
-      }
-
-      if (unityPipeEnabledRef.current) {
-        invoke('unity_pipe_send', { data: [...normalizedFlex, ...imuXYZ] }).catch(() => {});
       }
 
       if (webglEnabledRef.current && webglIframeRef.current?.contentWindow) {
@@ -517,52 +629,10 @@ function App() {
       return;
     }
 
-    // If recording for prediction (manual mode button), add to sensor buffer
-    if (isRecordingPredictionRef.current) {
-      setSensorBuffer(prev => {
-        // Include IMU quaternion so the 21-letter model gets real orientation data
-        const imuSnap = currentImuRef.current;
-        const sample9 = imuSnap
-          ? [...data, imuSnap.w, imuSnap.x, imuSnap.y, imuSnap.z]
-          : data;
-        const newBuffer = [...prev, sample9];
-        const targetSamples = 200;
-        
-        // Update progress
-        setPredictionProgress((newBuffer.length / targetSamples) * 100);
-
-        if (newBuffer.length >= targetSamples) {
-          console.log(`[App] Prediction recording complete - ${newBuffer.length} samples collected`);
-          console.log(`[App] isRecordingPredictionRef.current = ${isRecordingPredictionRef.current}`);
-          
-          // Check if we already stopped
-          if (!isRecordingPredictionRef.current) {
-            console.log('[App] Already stopped, skipping duplicate prediction');
-            return prev; // Don't clear buffer or trigger prediction again
-          }
-          
-          // Immediately stop further collection
-          isRecordingPredictionRef.current = false;
-          setIsRecordingPrediction(false);
-          setPredictionProgress(0);
-          
-          // Make prediction
-          setTimeout(() => {
-            makePredictionRef.current(newBuffer);
-          }, 10);
-
-          return [];
-        }
-        
-        return newBuffer;
-      });
-      return;
-    }
-
     // REAL-TIME CONTINUOUS STREAMING MODE
     // Rolling window: 50 samples (1 sec) = matches model training, faster letter transitions
     const REALTIME_WINDOW = 50;
-    if (recognitionMode === 'single' || recognitionMode === 'continuous') {
+    if (recognitionMode === 'single' || recognitionMode === 'continuous') { // both modes are now real-time
       // Include IMU so the 21-letter model gets real orientation data
       const imuSnap = currentImuRef.current;
       const sample9 = imuSnap ? [...data, imuSnap.w, imuSnap.x, imuSnap.y, imuSnap.z] : data;
@@ -595,8 +665,6 @@ function App() {
       
       return;
     }
-
-    // When in manual mode and not recording, don't collect data
   }, [isRecording, recognitionMode, isSimulating, baselines, maxbends]);
 
   const handleStopSimulation = () => {
@@ -604,30 +672,6 @@ function App() {
     isCollectingRef.current = false;
   };
 
-  // Manual prediction recording handlers
-  const handleStartPredictionRecording = useCallback(() => {
-    console.log('[App] Starting manual prediction recording');
-    isRecordingPredictionRef.current = true;
-    setIsRecordingPrediction(true);
-    setPredictionProgress(0);
-    setSensorBuffer([]);
-  }, []);
-
-  const handleStopPredictionRecording = useCallback(() => {
-    console.log('[App] Stopping manual prediction recording');
-    isRecordingPredictionRef.current = false;
-    setIsRecordingPrediction(false);
-    setPredictionProgress(0);
-    
-    // If we have some samples, make prediction with what we have
-    if (sensorBuffer.length > 50) {
-      setTimeout(() => {
-        makePredictionRef.current(sensorBuffer);
-      }, 10);
-    }
-    
-    setSensorBuffer([]);
-  }, [sensorBuffer]);
 
   // Data recording handlers
   const handleStartRecording = useCallback((letter: string) => {
@@ -751,6 +795,7 @@ function App() {
           >
             <option value="en">English</option>
             <option value="tr">Türkçe</option>
+            <option value="de">Deutsch</option>
           </select>
 
           <select
@@ -773,7 +818,7 @@ function App() {
 
       <div className="content">
         <h2 style={{ color: 'var(--text-primary)', fontSize: '1.5rem', fontWeight: '700', marginBottom: '1rem' }}>
-          ASL Recognition
+          {t('app.asl_recognition')}
         </h2>
 
         {/* Dev: Use local model switch */}
@@ -798,11 +843,16 @@ function App() {
               checked={useLocalModel}
               onChange={(e) => setUseLocalModel(e.target.checked)}
             />
-            <span>Use local model (dev)</span>
+            <span>{t('dev.local_model')}</span>
           </label>
           {useLocalModel && (
-            <span style={{ fontSize: '0.75rem', color: 'var(--accent-color)' }}>
-              localhost:8765 (96% model) — run: cd iot-sign-glove; python scripts/serve_local_model.py
+            <span style={{ fontSize: '0.75rem', color:
+              pythonServerStatus === 'running' ? '#10b981' :
+              pythonServerStatus === 'error'   ? '#ef4444' : '#fb923c'
+            }}>
+              {pythonServerStatus === 'starting' && '⏳ Loading model… predictions paused until ready'}
+              {pythonServerStatus === 'running'  && '🟢 Model server ready · localhost:8765'}
+              {pythonServerStatus === 'error'    && '🔴 Server failed — toggle off/on to retry'}
             </span>
           )}
 
@@ -820,7 +870,7 @@ function App() {
               checked={stableMode}
               onChange={(e) => setStableMode(e.target.checked)}
             />
-            <span>Stable mode</span>
+            <span>{t('dev.stable_mode')}</span>
           </label>
           {stableMode && (
             <span style={{ fontSize: '0.75rem', color: 'var(--accent-color)' }}>
@@ -829,61 +879,19 @@ function App() {
           )}
         </div>
 
-        {/* Unity Named Pipe toggle */}
+        {/* WebGL 3D Twin toggle */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button
             onClick={async () => {
-              if (unityPipeEnabled) {
-                await invoke('unity_pipe_stop').catch(() => {});
-                unityPipeEnabledRef.current = false;
-                setUnityPipeEnabled(false);
-                setUnityConnected(false);
-              } else {
-                unityRefQuatRef.current = null;  // capture fresh reference on next IMU sample
-                pipeEmaRef.current = null;        // reset EMA buffer on reconnect
-                await invoke('unity_pipe_start', { pipeName: 'glove_pipe' }).catch(() => {});
-                unityPipeEnabledRef.current = true;
-                setUnityPipeEnabled(true);
-              }
-            }}
-            style={{
-              padding: '0.4rem 0.9rem', borderRadius: '6px', cursor: 'pointer',
-              fontSize: '0.85rem', fontWeight: 600,
-              background: unityPipeEnabled ? 'rgba(99,102,241,0.15)' : 'rgba(100,116,139,0.1)',
-              color:      unityPipeEnabled ? '#818cf8'               : 'var(--text-secondary)',
-              border:     `1px solid ${unityPipeEnabled ? 'rgba(99,102,241,0.45)' : 'rgba(100,116,139,0.25)'}`,
-            }}>
-            🎮 {unityPipeEnabled ? 'Unity On' : 'Unity Off'}
-          </button>
-          {/* Launch Unity standalone executable */}
-          <button
-            onClick={() => invoke('launch_unity', {
-              exePath: 'C:\\Users\\Yigit\\Desktop\\iot-sign-language-desktop\\unity-handvis\\Build\\ITU_MoCap.exe'
-            }).catch((e: unknown) => alert(String(e)))}
-            title="Open Unity 3D Digital Twin (separate window)"
-            style={{
-              padding: '0.4rem 0.9rem', borderRadius: '6px', cursor: 'pointer',
-              fontSize: '0.85rem', fontWeight: 600,
-              background: 'rgba(16,185,129,0.1)',
-              color: '#34d399',
-              border: '1px solid rgba(16,185,129,0.35)',
-            }}>
-            🪄 Open 3D Twin
-          </button>
-
-          {/* WebGL twin (embedded iframe) */}
-          <button
-            onClick={async () => {
               if (webglEnabled) {
-                // Stop server + hide iframe
                 await invoke('stop_webgl_server').catch(() => {});
                 webglEnabledRef.current = false;
                 setWebglEnabled(false);
                 setWebglServerRunning(false);
               } else {
                 try {
-                  unityRefQuatRef.current = null; // fresh IMU reference for the new session
-                  pipeEmaRef.current = null;       // reset EMA buffer for new session
+                  unityRefQuatRef.current = null;
+                  pipeEmaRef.current = null;
                   await invoke('start_webgl_server', { dir: webglDir, port: WEBGL_PORT });
                   webglEnabledRef.current = true;
                   setWebglEnabled(true);
@@ -907,16 +915,7 @@ function App() {
           </button>
           {webglServerRunning && (
             <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-              serving :8787
-            </span>
-          )}
-
-          {unityPipeEnabled && (
-            <span style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: unityConnected ? '#10b981' : '#f59e0b', display: 'inline-block' }} />
-              <span style={{ color: 'var(--text-secondary)' }}>
-                {unityConnected ? 'Unity connected' : 'Waiting for Unity… (pipe: glove_pipe)'}
-              </span>
+              {t('twin.serving')}
             </span>
           )}
         </div>
@@ -942,9 +941,6 @@ function App() {
               isRealTimePredicting.current = false;
               lastPredictedLetterRef.current = '';
               lastPredictionTimeRef.current = 0;
-              setPredictionProgress(0);
-              setIsRecordingPrediction(false);
-              isRecordingPredictionRef.current = false;
               // Don't clear prediction/letters - user might want to see last result
             }
           }}
@@ -973,12 +969,12 @@ function App() {
             fontWeight: '600',
             marginBottom: '0.5rem'
           }}>
-            Recognition Mode
+            {t('recognition.label')}
           </label>
           <select
             value={recognitionMode}
             onChange={(e) => {
-              const newMode = e.target.value as 'manual' | 'single' | 'continuous';
+              const newMode = e.target.value as 'single' | 'continuous';
               setRecognitionMode(newMode);
               if (newMode !== 'continuous') {
                 handleClearWord();
@@ -1002,16 +998,11 @@ function App() {
               cursor: 'pointer'
             }}
           >
-            <option value="manual">Manual Mode (Click button to record)</option>
-            <option value="single">Single Letter Mode (Real-time predictions)</option>
-            <option value="continuous">Continuous Mode (Real-time word building)</option>
+            <option value="single">{t('recognition.single')}</option>
+            <option value="continuous">{t('recognition.continuous')}</option>
           </select>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.5rem 0 0 0' }}>
-            {recognitionMode === 'manual' 
-              ? 'Click "Record Sign" button to manually capture 200 samples for prediction.'
-              : recognitionMode === 'single'
-              ? '🔴 LIVE: Real-time predictions with rolling 50-sample window (1 sec). Fast letter transitions!'
-              : '🔴 LIVE: Real-time predictions building words. Updates 5x per second - hold each letter steady!'}
+            {recognitionMode === 'single' ? t('recognition.single_desc') : t('recognition.continuous_desc')}
           </p>
         </div>
 
@@ -1027,14 +1018,14 @@ function App() {
             gap: '0.85rem'
           }}>
             <p style={{ margin: 0, fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
-              Continuous Mode Settings
+              {t('continuous.title')}
             </p>
 
             {/* Confidence threshold */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
                 <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  Min Confidence to add letter
+                  {t('continuous.min_confidence')}
                 </label>
                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-color)' }}>
                   {Math.round(minConfidence * 100)}%
@@ -1048,8 +1039,8 @@ function App() {
                 style={{ width: '100%', accentColor: 'var(--accent-color)' }}
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                <span>10% (lenient)</span>
-                <span>95% (strict)</span>
+                <span>{t('continuous.lenient')}</span>
+                <span>{t('continuous.strict')}</span>
               </div>
             </div>
 
@@ -1057,7 +1048,7 @@ function App() {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
                 <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  Same-letter repeat window
+                  {t('continuous.repeat_window')}
                 </label>
                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-color)' }}>
                   {duplicateWindowMs} ms
@@ -1071,11 +1062,11 @@ function App() {
                 style={{ width: '100%', accentColor: 'var(--accent-color)' }}
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                <span>200ms (fast)</span>
-                <span>2000ms (slow)</span>
+                <span>{t('continuous.fast')}</span>
+                <span>{t('continuous.slow')}</span>
               </div>
               <p style={{ margin: '0.3rem 0 0 0', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                How long the same letter must be held before it can be added again.
+                {t('continuous.repeat_hint')}
               </p>
             </div>
           </div>
@@ -1104,15 +1095,55 @@ function App() {
               }}>
                 <div>
                   <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                    🖼️ 3D Digital Twin
+                    🖼️ {t('twin.title')}
                   </span>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
-                    WebGL · Live Hand Pose
+                    {t('twin.subtitle')}
                   </span>
                 </div>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                  localhost:{WEBGL_PORT}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                    localhost:{WEBGL_PORT}
+                  </span>
+                  <button
+                    onClick={() => {
+                      unityRefQuatRef.current = null;
+                      pipeEmaRef.current = null;
+                      setWebglKey(k => k + 1);
+                    }}
+                    title="Reload the WebGL twin (use if it freezes)"
+                    style={{
+                      padding: '0.2rem 0.6rem',
+                      borderRadius: '5px',
+                      border: '1px solid rgba(100,116,139,0.35)',
+                      background: 'rgba(100,116,139,0.1)',
+                      color: 'var(--text-secondary)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {t('twin.reset')}
+                  </button>
+                  <button
+                    onClick={() => { unityRefQuatRef.current = null; }}
+                    title="Re-calibrate orientation: sets the current hand pose as the new neutral position"
+                    style={{
+                      padding: '0.2rem 0.6rem',
+                      borderRadius: '5px',
+                      border: '1px solid rgba(99,102,241,0.35)',
+                      background: 'rgba(99,102,241,0.08)',
+                      color: '#818cf8',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {t('twin.recalibrate')}
+                  </button>
+                </div>
               </div>
               {/*
                 Responsive scaling: ResizeObserver measures this div's width,
@@ -1129,6 +1160,7 @@ function App() {
                 }}
               >
                 <iframe
+                  key={webglKey}
                   ref={webglIframeRef}
                   src={`http://localhost:${WEBGL_PORT}`}
                   title="Unity 3D Digital Twin"
@@ -1164,96 +1196,6 @@ function App() {
           </div>
         )}
 
-        {/* Manual Prediction Recording */}
-        {/* Manual Sign Recording - Only show in Manual mode */}
-        {connectedDevice && recognitionMode === 'manual' && (
-          <div style={{
-            padding: '1rem',
-            borderRadius: '12px',
-            border: '1px solid var(--border-color)',
-            background: 'var(--bg-card)',
-            marginBottom: '1rem'
-          }}>
-            <h3 style={{
-              fontSize: '1.1rem',
-              fontWeight: '600',
-              color: 'var(--text-primary)',
-              marginBottom: '0.75rem'
-            }}>
-              📝 Manual Sign Recording
-            </h3>
-            <p style={{
-              fontSize: '0.9rem',
-              color: 'var(--text-secondary)',
-              marginBottom: '1rem'
-            }}>
-              Click "Record Sign" to manually capture 200 samples (4 seconds) for prediction
-            </p>
-            
-            {isRecordingPrediction ? (
-              <div>
-                <div style={{
-                  width: '100%',
-                  height: '24px',
-                  backgroundColor: 'var(--input-bg)',
-                  borderRadius: '12px',
-                  overflow: 'hidden',
-                  marginBottom: '0.75rem',
-                  border: '1px solid var(--border-color)'
-                }}>
-                  <div style={{
-                    height: '100%',
-                    width: `${predictionProgress}%`,
-                    backgroundColor: 'var(--accent-color)',
-                    transition: 'width 0.1s ease',
-                    borderRadius: '12px'
-                  }} />
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <button
-                    onClick={handleStopPredictionRecording}
-                    style={{
-                      padding: '0.75rem 1.5rem',
-                      borderRadius: '8px',
-                      border: '1px solid var(--border-color)',
-                      background: 'var(--bg-button-danger)',
-                      color: 'white',
-                      fontSize: '0.95rem',
-                      fontWeight: '600',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    ⏹️ Stop Recording
-                  </button>
-                  <span style={{
-                    fontSize: '0.9rem',
-                    color: 'var(--text-secondary)'
-                  }}>
-                    Recording... {Math.round(predictionProgress)}%
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={handleStartPredictionRecording}
-                disabled={isRecording || isAnalyzing}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  borderRadius: '8px',
-                  border: '1px solid var(--border-color)',
-                  background: isRecording || isAnalyzing ? 'var(--bg-button-disabled)' : 'var(--accent-color)',
-                  color: 'white',
-                  fontSize: '0.95rem',
-                  fontWeight: '600',
-                  cursor: isRecording || isAnalyzing ? 'not-allowed' : 'pointer',
-                  opacity: isRecording || isAnalyzing ? 0.5 : 1
-                }}
-              >
-                🎬 Record Sign (200 samples)
-              </button>
-            )}
-          </div>
-        )}
 
 
 
@@ -1282,14 +1224,14 @@ function App() {
                 color: 'var(--text-primary)',
                 margin: 0
               }}>
-                📊 Serial Data Log (Last 100 samples)
+                {t('log.title')}
               </h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button
                   onClick={() => {
                     const text = dataLog.join('\n');
                     navigator.clipboard.writeText(text);
-                    alert('Copied to clipboard!');
+                    alert(t('log.copied'));
                   }}
                   style={{
                     padding: '0.5rem 1rem',
@@ -1302,7 +1244,7 @@ function App() {
                     fontWeight: '500'
                   }}
                 >
-                  📋 Copy All
+                  {t('log.copy')}
                 </button>
                 <button
                   onClick={() => {
@@ -1320,7 +1262,7 @@ function App() {
                     fontWeight: '500'
                   }}
                 >
-                  🗑️ Clear
+                  {t('log.clear')}
                 </button>
               </div>
             </div>
@@ -1346,7 +1288,7 @@ function App() {
               color: 'var(--text-secondary)', 
               margin: '0.75rem 0 0 0' 
             }}>
-              Cols: Thumb, Index, Middle, Ring, Pinky | qw qx qy qz | lx ly lz (linear accel m/s²) | gx gy gz (gyro deg/s)
+              {t('log.cols')}
             </p>
           </div>
         )}
@@ -1373,47 +1315,58 @@ function App() {
           const calBaselines = useSimulatorCal ? SIMULATOR_BASELINES : baselines;
           const calMaxbends = useSimulatorCal ? SIMULATOR_MAXBENDS : maxbends;
           return (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '1rem',
-              marginBottom: '1rem',
-              alignItems: 'start'
-            }}>
-              <HandVisualization3D
-                currentSample={currentSample}
-                isActive={isSimulating || connectedDevice !== null}
-                prediction={currentPrediction?.letter}
-                confidence={currentPrediction?.confidence}
-                onTestSample={(sample) => setCurrentSample(sample)}
-                baselines={calBaselines}
-                maxbends={calMaxbends}
-                quaternion={currentImu}
-                onRecalibrate={() => { unityRefQuatRef.current = null; }}
-              />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <SensorDisplay
+            <>
+              {/* Top row: 2-column grid */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '1rem',
+                marginBottom: '1rem',
+                alignItems: 'start'
+              }}>
+                <HandVisualization3D
                   currentSample={currentSample}
                   isActive={isSimulating || connectedDevice !== null}
-                  sampleCount={sensorBuffer.length}
-                  targetSamples={recognitionMode === 'manual' ? 200 : 50}
-                  isCollecting={isCollectingRef.current}
+                  prediction={currentPrediction?.letter}
+                  confidence={currentPrediction?.confidence}
+                  onTestSample={(sample) => setCurrentSample(sample)}
                   baselines={calBaselines}
                   maxbends={calMaxbends}
+                  quaternion={currentImu}
+                  onRecalibrate={() => { unityRefQuatRef.current = null; }}
                 />
-                <PredictionView
-                  prediction={currentPrediction}
-                  isLoading={isAnalyzing}
-                  error={predictionError}
-                  sampleCount={sensorBuffer.length}
-                  isContinuousMode={recognitionMode === 'continuous'}
-                  currentWord={detectedLetters.join('')}
-                  onClearWord={handleClearWord}
-                  onDeleteLetter={handleDeleteLetter}
-                  isRealTimeMode={recognitionMode === 'single' || recognitionMode === 'continuous'}
-                />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <SensorDisplay
+                    currentSample={currentSample}
+                    isActive={isSimulating || connectedDevice !== null}
+                    sampleCount={sensorBuffer.length}
+                    targetSamples={50}
+                    isCollecting={isCollectingRef.current}
+                    baselines={calBaselines}
+                    maxbends={calMaxbends}
+                  />
+                  <PredictionView
+                    prediction={currentPrediction}
+                    isLoading={isAnalyzing}
+                    error={predictionError}
+                    sampleCount={sensorBuffer.length}
+                    isContinuousMode={recognitionMode === 'continuous'}
+                    currentWord={detectedLetters.join('')}
+                    onClearWord={handleClearWord}
+                    onDeleteLetter={handleDeleteLetter}
+                    isRealTimeMode={recognitionMode === 'single' || recognitionMode === 'continuous'}
+                  />
+                </div>
               </div>
-            </div>
+
+              {/* Full-width graph row */}
+              <FlexGraph
+                currentSample={currentSample}
+                isActive={isSimulating || connectedDevice !== null}
+                baselines={calBaselines}
+                maxbends={calMaxbends}
+              />
+            </>
           );
         })()}
 

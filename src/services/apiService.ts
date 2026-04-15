@@ -123,7 +123,7 @@ class ApiService {
     }
   }
 
-  async checkHealth(): Promise<HealthResponse> {
+  async checkHealth(silent = false): Promise<HealthResponse> {
     try {
       const response = await fetch(`${this.getEffectiveBaseUrl()}/health`, {
         method: 'GET',
@@ -138,7 +138,7 @@ class ApiService {
 
       return await response.json();
     } catch (error) {
-      console.error('API health check error:', error);
+      if (!silent) console.error('API health check error:', error);
       throw new Error('API health check failed');
     }
   }

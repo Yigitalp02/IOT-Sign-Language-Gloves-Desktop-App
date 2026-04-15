@@ -6,6 +6,7 @@
 import { useCallback, useState, useRef, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import './HandVisualization3D.css';
 
@@ -82,6 +83,7 @@ export default function HandVisualization3D({
   quaternion = null,
   onRecalibrate,
 }: HandVisualization3DProps) {
+  const { t } = useTranslation();
   const { theme } = useTheme();
   const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
@@ -324,8 +326,10 @@ export default function HandVisualization3D({
 
     // Render loop — OrbitControls.update() + renderer.render() only
     const animate = () => {
+      // Stop the loop immediately if the component has already been cleaned up
+      if (!threeRef.current) return;
       const id = requestAnimationFrame(animate);
-      threeRef.current!.rafId = id;
+      threeRef.current.rafId = id;
       controls.update();
       renderer.render(scene, camera);
     };
@@ -343,7 +347,12 @@ export default function HandVisualization3D({
     threeRef.current = { renderer, scene, camera, controls, lines, joints, rafId, axisGroup };
 
     return () => {
-      cancelAnimationFrame(rafId);
+      // Cancel the *latest* scheduled frame (threeRef.current.rafId is updated every frame
+      // so it always holds the most recent id; the initial rafId may already be consumed)
+      const latestRafId = threeRef.current?.rafId ?? rafId;
+      cancelAnimationFrame(latestRafId);
+      // Null the ref first so any in-flight animate() call bails out at the guard above
+      threeRef.current = null;
       ro.disconnect();
       controls.dispose();
       renderer.domElement.removeEventListener('mousemove', onMouseMove);
@@ -351,7 +360,6 @@ export default function HandVisualization3D({
       renderer.dispose();
       if (container.contains(tooltip)) container.removeChild(tooltip);
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
-      threeRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -428,7 +436,7 @@ export default function HandVisualization3D({
 
   const title = prediction && confidence
     ? `${prediction}  ${Math.round(confidence * 100)}%`
-    : isActive ? 'Real-Time Hand Pose' : 'Waiting for data...';
+    : isActive ? t('hand_viz.realtime_pose') : t('hand_viz.waiting');
 
   return (
     <div className="hand-viz-container" style={{ backgroundColor: bgCard, borderColor }}>
@@ -436,13 +444,13 @@ export default function HandVisualization3D({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <div>
             <h3 className="hand-viz-title" style={{ color: textPrimary, margin: 0 }}>
-              3D Hand Visualization
+              {t('hand_viz.title')}
             </h3>
             {prediction && confidence ? (
               <span style={{ fontSize: '0.82rem', color: '#ffffff', fontWeight: 500 }}>
-                Prediction: <strong style={{ color: '#f1f5f9' }}>{prediction}</strong>
+                {t('hand_viz.prediction_label')} <strong style={{ color: '#f1f5f9' }}>{prediction}</strong>
                 <span style={{ color: isDark ? '#475569' : '#d1d5db', margin: '0 6px' }}>|</span>
-                Confidence: <strong style={{ color: '#f1f5f9' }}>{Math.round(confidence * 100)}%</strong>
+                {t('hand_viz.confidence_label')} <strong style={{ color: '#f1f5f9' }}>{Math.round(confidence * 100)}%</strong>
               </span>
             ) : (
               <span style={{ fontSize: '0.8rem', color: textSecondary }}>{title}</span>
@@ -458,14 +466,14 @@ export default function HandVisualization3D({
                 color:      showAxes ? '#818cf8'               : '#94a3b8',
                 border:     `1px solid ${showAxes ? 'rgba(99,102,241,0.4)' : 'rgba(100,116,139,0.3)'}`,
               }}>
-              {showAxes ? '📐 Axes On' : '📐 Axes Off'}
+              {showAxes ? t('hand_viz.axes_on') : t('hand_viz.axes_off')}
             </button>
             {quaternion && (
               <>
                 <span style={{ fontSize:'0.7rem', fontWeight:700, padding:'2px 6px', borderRadius:'4px', background:'rgba(99,102,241,0.15)', color:'#818cf8', border:'1px solid rgba(99,102,241,0.4)', letterSpacing:'0.04em' }}>IMU</span>
                 <button onClick={handleSetReference} title="Hold hand palm-down then click"
                   style={{ fontSize:'0.7rem', fontWeight:600, padding:'2px 7px', borderRadius:'4px', background: refQuat ? 'rgba(16,185,129,0.12)' : 'rgba(251,146,60,0.12)', color: refQuat ? '#34d399' : '#fb923c', border:`1px solid ${refQuat ? 'rgba(52,211,153,0.4)' : 'rgba(251,146,60,0.4)'}`, cursor:'pointer', whiteSpace:'nowrap' }}>
-                  {refQuat ? '📍 Re-calibrate' : '📍 Set Reference'}
+                  {refQuat ? t('hand_viz.recalibrate') : t('hand_viz.set_reference')}
                 </button>
               </>
             )}
@@ -500,14 +508,14 @@ export default function HandVisualization3D({
 
       {!isActive && (
         <p className="hand-viz-hint" style={{ color: textSecondary }}>
-          Start the simulator or connect a glove to see real-time hand pose
+          {t('hand_viz.hint')}
         </p>
       )}
 
       {onTestSample && (
         <div style={{ display:'flex', gap:'0.5rem', marginTop:'0.75rem', justifyContent:'center', flexWrap:'wrap' }}>
-          <button onClick={() => onTestSample([2700,1650,1850,2110,2125])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>🖐️ Straight</button>
-          <button onClick={() => onTestSample([2200,1300,1480,1640,1720])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>✊ Bent</button>
+          <button onClick={() => onTestSample([2700,1650,1850,2110,2125])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>{t('hand_viz.test_straight')}</button>
+          <button onClick={() => onTestSample([2200,1300,1480,1640,1720])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>{t('hand_viz.test_bent')}</button>
         </div>
       )}
     </div>

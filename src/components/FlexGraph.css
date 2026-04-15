@@ -1,0 +1,237 @@
+/* ── Backdrop (expanded mode) ────────────────────────────────────────────── */
+.fg-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 499;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+
+/* ── Container ───────────────────────────────────────────────────────────── */
+.fg-wrap {
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.fg-wrap--expanded {
+  position: fixed;
+  inset: 20px;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  /* padding stays the same – canvas fills the rest via ResizeObserver */
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+.fg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.fg-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.fg-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fg-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 20px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+/* ── Mode toggle (Norm / Raw) ────────────────────────────────────────────── */
+.fg-mode-toggle {
+  display: flex;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.fg-mode-btn {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1.2;
+}
+
+.fg-mode-btn--active {
+  background: var(--accent-primary, #6366f1);
+  color: #fff;
+}
+
+.fg-mode-btn:not(.fg-mode-btn--active):hover {
+  color: var(--text-primary);
+}
+
+.fg-all-btn {
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 0.2rem 0.55rem;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  line-height: 1.2;
+}
+
+.fg-all-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+/* ── Expand button ───────────────────────────────────────────────────────── */
+.fg-expand-btn {
+  font-size: 1rem;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.fg-expand-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.fg-expand-btn--active {
+  background: var(--accent-primary, #6366f1);
+  border-color: var(--accent-primary, #6366f1);
+  color: #fff;
+}
+
+/* ── Canvas ──────────────────────────────────────────────────────────────── */
+.fg-canvas {
+  width: 100%;
+  display: block;
+  border-radius: 6px;
+}
+
+.fg-wrap--expanded .fg-canvas {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* ── Legend / Checkboxes ─────────────────────────────────────────────────── */
+.fg-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.85rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.fg-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  user-select: none;
+}
+
+.fg-item--dim {
+  opacity: 0.3;
+}
+
+.fg-item input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  accent-color: #818cf8;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.fg-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fg-name {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* ── Live value readout strip ────────────────────────────────────────────── */
+.fg-live {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.85rem;
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.fg-live-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: opacity 0.15s;
+}
+
+.fg-live-item--dim {
+  opacity: 0.25;
+}
+
+.fg-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fg-live-name {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.fg-live-val {
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 3.2ch;
+  text-align: right;
+}

@@ -1,4 +1,5 @@
 // import { useTheme } from '../context/ThemeContext'; // Removed unused
+import { useTranslation } from 'react-i18next';
 import './SensorDisplay.css';
 
 interface SensorDisplayProps {
@@ -23,6 +24,7 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
   maxbends
 }) => {
   // const { theme } = useTheme(); // Removed unused
+  const { t } = useTranslation();
 
   // Calculate color based on calibration (if provided) or use per-finger defaults
   const getBarColor = (value: number, fingerIndex: number) => {
@@ -59,12 +61,15 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
     return `${((value - 800) / (2700 - 800)) * 100}%`;
   };
 
-  const fingerNames = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+  const fingerNames = [
+    t('fingers.thumb'), t('fingers.index'), t('fingers.middle'),
+    t('fingers.ring'),  t('fingers.pinky'),
+  ];
 
   return (
     <div className="sensor-display-container">
       <div className="sensor-display-header">
-        <h3 className="sensor-display-title">Real-Time Sensor Values</h3>
+        <h3 className="sensor-display-title">{t('sensor.title')}</h3>
         <div className={`status-dot ${isActive ? 'active' : ''}`} />
       </div>
 
@@ -87,8 +92,8 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
               marginRight: '0.5rem'
             }}>
               {targetSamples <= 50
-                ? (sampleCount >= 50 ? '🔴 Live (rolling window)' : '⏳ Filling window...')
-                : (isCollecting ? '📊 Collecting' : '⏸ Idle')}
+                ? (sampleCount >= 50 ? t('sensor.live') : t('sensor.filling'))
+                : (isCollecting ? t('sensor.collecting') : t('sensor.idle'))}
             </span>
             {motionDetected && (
               <span style={{
@@ -99,7 +104,7 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
                 borderRadius: '4px',
                 marginLeft: '0.5rem'
               }}>
-                🔄 Buffer Cleared
+                {t('sensor.buffer_cleared')}
               </span>
             )}
           </div>
@@ -109,14 +114,14 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
             color: isCollecting ? '#10b981' : '#64748b'
           }}>
             {targetSamples <= 50
-              ? `Window: ${sampleCount}/${targetSamples}`  // Rolling window, not collecting
-              : `${sampleCount}/${targetSamples} samples`}
+              ? t('sensor.window', { current: sampleCount, target: targetSamples })
+              : t('sensor.samples_counter', { current: sampleCount, target: targetSamples })}
           </div>
         </div>
       )}
 
       {!currentSample || currentSample.length === 0 ? (
-        <p className="no-data-text">No sensor data yet...</p>
+        <p className="no-data-text">{t('sensor.no_data')}</p>
       ) : (
         <div className="sensors-container">
           {currentSample.map((value, index) => (
@@ -149,15 +154,15 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
         <div className="legend">
           <div className="legend-item">
             <div className="legend-dot red" />
-            <span className="legend-text">Bent</span>
+            <span className="legend-text">{t('sensor.legend_bent')}</span>
           </div>
           <div className="legend-item">
             <div className="legend-dot yellow" />
-            <span className="legend-text">Partial</span>
+            <span className="legend-text">{t('sensor.legend_partial')}</span>
           </div>
           <div className="legend-item">
             <div className="legend-dot green" />
-            <span className="legend-text">Straight</span>
+            <span className="legend-text">{t('sensor.legend_straight')}</span>
           </div>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 
 interface CalibratorProps {
@@ -9,7 +10,7 @@ interface CalibratorProps {
   currentMaxbends: number[];
 }
 
-const FINGER_NAMES = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+const FINGER_KEYS = ['thumb', 'index', 'middle', 'ring', 'pinky'] as const;
 
 type CalibrationStep = 'idle' | 'recording-straight' | 'recording-bent';
 type CalibrationMode = 'per-finger' | 'full-hand';
@@ -32,8 +33,11 @@ const emptyCalibrations = (): FingerCalibration[] =>
   }));
 
 export default function Calibrator({ onCalibrationComplete, isConnected, currentSample, currentBaselines, currentMaxbends }: CalibratorProps) {
+  const { t } = useTranslation();
   const { theme } = useTheme();
   const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+  const FINGER_NAMES = FINGER_KEYS.map(k => t(`fingers.${k}`));
 
   const [mode, setMode] = useState<CalibrationMode>('per-finger');
   const [currentFinger, setCurrentFinger] = useState(0);
@@ -191,7 +195,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
         <div style={{ height: '100%', background: '#3b82f6', width: `${progress}%`, transition: 'width 0.1s' }} />
       </div>
       <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.625rem', color: 'var(--text-secondary)' }}>
-        {progressSampleCount}/{SAMPLES_NEEDED} samples
+        {t('calibrator.samples_progress', { count: progressSampleCount, total: SAMPLES_NEEDED })}
       </p>
     </div>
   );
@@ -204,10 +208,10 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
         <div>
           <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 0.25rem 0' }}>
-            Sensor Calibrator
+            {t('calibrator.title')}
           </h3>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
-            {mode === 'per-finger' ? 'Calibrate each finger individually' : 'Calibrate all fingers at once (full hand)'}
+            {mode === 'per-finger' ? t('calibrator.per_finger_desc') : t('calibrator.full_hand_desc')}
           </p>
         </div>
 
@@ -239,7 +243,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
                 whiteSpace: 'nowrap'
               }}
             >
-              {m === 'per-finger' ? '☝️ Per-Finger' : '✋ Full Hand'}
+              {m === 'per-finger' ? t('calibrator.per_finger_btn') : t('calibrator.full_hand_btn')}
             </button>
           ))}
         </div>
@@ -247,7 +251,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
 
       {!isConnected && (
         <div style={{ padding: '1rem', borderRadius: '8px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', marginBottom: '1rem' }}>
-          <p style={{ color: '#ef4444', margin: 0, fontSize: '0.875rem' }}>Please connect to your glove first</p>
+          <p style={{ color: '#ef4444', margin: 0, fontSize: '0.875rem' }}>{t('calibrator.connect_first')}</p>
         </div>
       )}
 
@@ -291,7 +295,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
         {/* Box header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h4 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.1rem' }}>
-            {mode === 'full-hand' ? 'Calibrating: All Fingers' : `Calibrating: ${FINGER_NAMES[currentFinger]}`}
+            {mode === 'full-hand' ? t('calibrator.calibrating_all') : t('calibrator.calibrating_finger', { finger: FINGER_NAMES[currentFinger] })}
           </h4>
           {/* Recalibrate button for per-finger */}
           {mode === 'per-finger' && currentFingerData.baseline !== null && (
@@ -299,7 +303,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
               padding: '0.5rem 1rem', borderRadius: '6px', border: '1px solid #ef4444',
               background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontSize: '0.75rem', fontWeight: '600',
               cursor: step === 'idle' ? 'pointer' : 'not-allowed', opacity: step === 'idle' ? 1 : 0.5
-            }}>Recalibrate</button>
+            }}>{t('calibrator.recalibrate')}</button>
           )}
           {/* Reset all button for full-hand */}
           {mode === 'full-hand' && allCalibrated && (
@@ -307,7 +311,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
               padding: '0.5rem 1rem', borderRadius: '6px', border: '1px solid #ef4444',
               background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontSize: '0.75rem', fontWeight: '600',
               cursor: step === 'idle' ? 'pointer' : 'not-allowed'
-            }}>Redo</button>
+            }}>{t('calibrator.redo')}</button>
           )}
         </div>
 
@@ -319,10 +323,10 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
             <div>
               <h5 style={{ margin: '0 0 0.25rem 0', color: 'var(--text-primary)', fontSize: '0.875rem' }}>
-                Step 1: Straighten {mode === 'full-hand' ? 'All Fingers' : FINGER_NAMES[currentFinger]}
+                {mode === 'full-hand' ? t('calibrator.step1_title_all') : t('calibrator.step1_title', { finger: FINGER_NAMES[currentFinger] })}
               </h5>
               <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                {mode === 'full-hand' ? 'Hold your hand flat, all fingers fully extended' : `Keep ${FINGER_NAMES[currentFinger]} fully straight`}
+                {mode === 'full-hand' ? t('calibrator.step1_desc_all') : t('calibrator.step1_desc', { finger: FINGER_NAMES[currentFinger] })}
               </p>
             </div>
             <button
@@ -336,7 +340,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
                 opacity: !isConnected || step !== 'idle' || hasStraightData ? 0.6 : 1
               }}
             >
-              {hasStraightData ? '✓ Done' : 'Record'}
+              {hasStraightData ? t('calibrator.done') : t('calibrator.record')}
             </button>
           </div>
           {step === 'recording-straight' && <ProgressBar />}
@@ -351,10 +355,10 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
             <div>
               <h5 style={{ margin: '0 0 0.25rem 0', color: 'var(--text-primary)', fontSize: '0.875rem' }}>
-                Step 2: Bend {mode === 'full-hand' ? 'All Fingers' : FINGER_NAMES[currentFinger]}
+                {mode === 'full-hand' ? t('calibrator.step2_title_all') : t('calibrator.step2_title', { finger: FINGER_NAMES[currentFinger] })}
               </h5>
               <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                {mode === 'full-hand' ? 'Make a fist, all fingers fully curled' : `Curl ${FINGER_NAMES[currentFinger]} fully bent`}
+                {mode === 'full-hand' ? t('calibrator.step2_desc_all') : t('calibrator.step2_desc', { finger: FINGER_NAMES[currentFinger] })}
               </p>
             </div>
             <button
@@ -368,7 +372,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
                 opacity: !isConnected || !hasStraightData || step !== 'idle' || hasBentData ? 0.6 : 1
               }}
             >
-              {hasBentData ? '✓ Done' : 'Record'}
+              {hasBentData ? t('calibrator.done') : t('calibrator.record')}
             </button>
           </div>
           {step === 'recording-bent' && <ProgressBar />}
@@ -377,7 +381,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
         {/* Result preview — full-hand shows all 5 */}
         {mode === 'full-hand' && allCalibrated && (
           <div style={{ marginTop: '1rem', padding: '0.75rem', borderRadius: '6px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)' }}>
-            <p style={{ margin: '0 0 0.4rem 0', fontSize: '0.75rem', color: '#10b981', fontWeight: '600' }}>All fingers calibrated ✓</p>
+            <p style={{ margin: '0 0 0.4rem 0', fontSize: '0.75rem', color: '#10b981', fontWeight: '600' }}>{t('calibrator.all_calibrated_check')}</p>
             {fingerCalibrations.map((fc, i) => (
               <div key={i} style={{ fontSize: '0.65rem', fontFamily: 'monospace', color: 'var(--text-secondary)', marginBottom: '0.15rem' }}>
                 <strong style={{ color: 'var(--text-primary)' }}>{FINGER_NAMES[i]}:</strong> {fc.baseline} → {fc.maxbend}
@@ -389,9 +393,9 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
         {/* Per-finger: single finger result */}
         {mode === 'per-finger' && currentFingerData.baseline !== null && (
           <div style={{ marginTop: '1rem', padding: '0.75rem', borderRadius: '6px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)' }}>
-            <p style={{ margin: 0, fontSize: '0.75rem', color: '#10b981', fontWeight: '600' }}>{FINGER_NAMES[currentFinger]} calibrated ✓</p>
+            <p style={{ margin: 0, fontSize: '0.75rem', color: '#10b981', fontWeight: '600' }}>{t('calibrator.finger_calibrated', { finger: FINGER_NAMES[currentFinger] })}</p>
             <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.625rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
-              Straight: {currentFingerData.baseline} | Bent: {currentFingerData.maxbend}
+              {t('calibrator.straight_label')}: {currentFingerData.baseline} | {t('calibrator.bent_label')}: {currentFingerData.maxbend}
             </p>
           </div>
         )}
@@ -405,12 +409,12 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
           border: allCalibrated ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(59,130,246,0.3)'
         }}>
           <h4 style={{ margin: '0 0 0.5rem 0', color: allCalibrated ? '#10b981' : '#3b82f6', fontSize: '1rem' }}>
-            {allCalibrated ? 'All Fingers Calibrated' : `${calibratedCount}/5 Fingers Calibrated`}
+            {allCalibrated ? t('calibrator.all_fingers_calibrated') : t('calibrator.partial_calibrated', { count: calibratedCount })}
           </h4>
 
           {!allCalibrated && (
             <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              You can apply now — uncalibrated fingers will use current defaults.
+              {t('calibrator.partial_hint')}
             </p>
           )}
 
@@ -420,7 +424,7 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
               const isCalibrated = fc.baseline !== null;
               return (
                 <div key={index} style={{ marginBottom: '0.25rem', color: isCalibrated ? 'var(--text-primary)' : 'var(--text-secondary)', opacity: isCalibrated ? 1 : 0.6 }}>
-                  <strong>{name}:</strong> {isCalibrated ? `${fc.baseline} → ${fc.maxbend}` : `${currentBaselines[index]} → ${currentMaxbends[index]} (default)`}
+                  <strong>{name}:</strong> {isCalibrated ? `${fc.baseline} → ${fc.maxbend}` : `${currentBaselines[index]} → ${currentMaxbends[index]} ${t('calibrator.default_label')}`}
                 </div>
               );
             })}
@@ -432,12 +436,12 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
               background: allCalibrated ? '#10b981' : '#3b82f6', color: 'white',
               fontSize: '0.875rem', fontWeight: '600', cursor: 'pointer'
             }}>
-              {allCalibrated ? 'Apply All' : `Apply ${calibratedCount} Finger${calibratedCount > 1 ? 's' : ''}`}
+              {allCalibrated ? t('calibrator.apply_all') : t('calibrator.apply_partial', { count: calibratedCount })}
             </button>
             <button onClick={reset} style={{
               padding: '0.75rem 1.5rem', borderRadius: '8px', border: '1px solid var(--border-color)',
               background: 'var(--input-bg)', color: 'var(--text-primary)', fontSize: '0.875rem', fontWeight: '600', cursor: 'pointer'
-            }}>Reset All</button>
+            }}>{t('calibrator.reset_all')}</button>
           </div>
         </div>
       )}

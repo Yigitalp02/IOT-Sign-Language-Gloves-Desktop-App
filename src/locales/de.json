@@ -1,0 +1,202 @@
+{
+    "app": {
+        "title": "IoT Gebärdensprache",
+        "subtitle": "ASL-Erkennungssystem",
+        "footer": "Echtzeit-Erkennung der amerikanischen Gebärdensprache mit ML und Sensor-Handschuh-Technologie.",
+        "version": "Version 1.0.0 | Informatik-Abschlussprojekt | Yiğit Alp Bilgin",
+        "asl_recognition": "ASL-Erkennung"
+    },
+    "input": {
+        "label": "Text zum Sprechen eingeben:",
+        "placeholder": "Etwas zum Sprechen eingeben..."
+    },
+    "buttons": {
+        "speak_tr": "Sprechen (Türkisch)",
+        "speak_en": "Sprechen (Englisch)",
+        "connect": "Handschuh verbinden",
+        "disconnect": "Trennen",
+        "scan": "Scannen",
+        "stop": "Stopp"
+    },
+    "connection": {
+        "title": "Handschuh-Verbindung",
+        "connected": "Verbunden",
+        "disconnected": "Getrennt",
+        "no_ports": "Keine Geräte gefunden"
+    },
+    "simulator": {
+        "title": "ASL-Simulator",
+        "description": "Buchstaben auswählen um Sensordaten zu simulieren",
+        "simulating": "Simuliert"
+    },
+    "prediction": {
+        "analyzing": "Analysiere",
+        "waiting": "Warte auf Sensordaten...",
+        "confidence": "Konfidenz",
+        "samples": "Proben",
+        "time": "Zeit",
+        "model": "Modell",
+        "letters_detected_one": "{{count}} Buchstabe erkannt",
+        "letters_detected_other": "{{count}} Buchstaben erkannt",
+        "speak": "Sprechen",
+        "delete": "Löschen",
+        "clear": "Leeren",
+        "last_letter": "Letzter Buchstabe:",
+        "confidence_label": "Konfidenz:"
+    },
+    "settings": {
+        "theme": "Design",
+        "language": "Sprache",
+        "light": "Hell",
+        "dark": "Dunkel",
+        "system": "System"
+    },
+    "status": {
+        "speaking_tr": "Spreche auf Türkisch...",
+        "speaking_en": "Spreche auf Englisch...",
+        "success_tr": "Erfolgreich auf Türkisch gesprochen",
+        "success_en": "Erfolgreich auf Englisch gesprochen",
+        "error_empty": "Fehler: Bitte Text zum Sprechen eingeben."
+    },
+    "recognition": {
+        "label": "Erkennungsmodus",
+        "single": "Einzelbuchstaben-Modus (Echtzeit-Vorhersagen)",
+        "continuous": "Dauermodus (Echtzeit-Wortbildung)",
+        "single_desc": "🔴 LIVE: Echtzeit-Vorhersagen mit 50-Proben-Fenster (1 Sek.). Schnelle Buchstabenübergänge!",
+        "continuous_desc": "🔴 LIVE: Echtzeit-Vorhersagen mit Wortbildung. 5x pro Sekunde — jeden Buchstaben ruhig halten!"
+    },
+    "continuous": {
+        "title": "Dauermodus-Einstellungen",
+        "min_confidence": "Mindest-Konfidenz zum Hinzufügen",
+        "lenient": "10% (locker)",
+        "strict": "95% (streng)",
+        "repeat_window": "Gleicher-Buchstabe-Wiederholungsfenster",
+        "fast": "200ms (schnell)",
+        "slow": "2000ms (langsam)",
+        "repeat_hint": "Wie lange derselbe Buchstabe gehalten werden muss, bevor er erneut hinzugefügt werden kann."
+    },
+    "dev": {
+        "local_model": "Lokales Modell verwenden (Entwickler)",
+        "stable_mode": "Stabiler Modus"
+    },
+    "log": {
+        "title": "📊 Serielles Datenprotokoll (Letzte 100 Proben)",
+        "copy": "📋 Alle kopieren",
+        "clear": "🗑️ Leeren",
+        "copied": "In die Zwischenablage kopiert!",
+        "cols": "Spalten: Daumen, Zeige, Mittel, Ring, Kleiner | qw qx qy qz | lx ly lz (Linearbeschl. m/s²) | gx gy gz (Gyroskop Grad/s)"
+    },
+    "twin": {
+        "title": "3D Digitaler Zwilling",
+        "subtitle": "WebGL · Live-Handpose",
+        "reset": "↺ Zurücksetzen",
+        "recalibrate": "⊕ Neu kalibrieren",
+        "serving": "läuft auf :8787"
+    },
+    "fingers": {
+        "thumb": "Daumen",
+        "index": "Zeigefinger",
+        "middle": "Mittelfinger",
+        "ring": "Ringfinger",
+        "pinky": "Kleiner Finger"
+    },
+    "calibrator": {
+        "title": "Sensor-Kalibrator",
+        "per_finger_desc": "Jeden Finger einzeln kalibrieren",
+        "full_hand_desc": "Alle Finger gleichzeitig kalibrieren (ganze Hand)",
+        "per_finger_btn": "☝️ Pro Finger",
+        "full_hand_btn": "✋ Ganze Hand",
+        "connect_first": "Bitte zuerst den Handschuh verbinden",
+        "calibrating_all": "Kalibrierung: Alle Finger",
+        "calibrating_finger": "Kalibrierung: {{finger}}",
+        "recalibrate": "Neu kalibrieren",
+        "redo": "Wiederholen",
+        "step1_title_all": "Schritt 1: Alle Finger strecken",
+        "step1_title": "Schritt 1: {{finger}} strecken",
+        "step1_desc_all": "Hand flach halten, alle Finger vollständig gestreckt",
+        "step1_desc": "{{finger}} vollständig gerade halten",
+        "step2_title_all": "Schritt 2: Alle Finger beugen",
+        "step2_title": "Schritt 2: {{finger}} beugen",
+        "step2_desc_all": "Faust machen, alle Finger vollständig gebeugt",
+        "step2_desc": "{{finger}} vollständig beugen",
+        "record": "Aufnehmen",
+        "done": "✓ Fertig",
+        "all_calibrated_check": "Alle Finger kalibriert ✓",
+        "finger_calibrated": "{{finger}} kalibriert ✓",
+        "all_fingers_calibrated": "Alle Finger kalibriert",
+        "partial_calibrated": "{{count}}/5 Finger kalibriert",
+        "partial_hint": "Jetzt anwenden möglich — unkalibrierte Finger verwenden aktuelle Standardwerte.",
+        "apply_all": "Alle anwenden",
+        "apply_partial": "{{count}} Finger anwenden",
+        "reset_all": "Alle zurücksetzen",
+        "samples_progress": "{{count}}/{{total}} Proben",
+        "straight_label": "Gestreckt",
+        "bent_label": "Gebeugt",
+        "default_label": "(Standard)"
+    },
+    "recorder": {
+        "title": "📊 Datenaufnahme für Training",
+        "connect_first": "⚠️ Zuerst Handschuh verbinden!",
+        "description": "Beschriftete Proben für jeden ASL-Buchstaben sammeln.",
+        "left_hand": "Linkshand-Handschuh",
+        "left_hand_note": "— Zeichen sind gespiegelt gegenüber Standard-ASL-Diagrammen.",
+        "best_practice": "Beste Praxis:",
+        "best_practice_desc": "10–15 Sitzungen pro Buchstabe aufnehmen, jedes Mal die Handposition leicht variieren. IMU-Daten werden automatisch aufgezeichnet wenn der BNO055 verbunden ist.",
+        "select_letter": "Aufzunehmenden Buchstaben auswählen:",
+        "flex_only": "Nur Flex-Sensoren",
+        "flex_imu": "Flex + IMU-Orientierung",
+        "bno_required": "(BNO055 erforderlich)",
+        "orientation_hint": "Linkshand-Orientierung für \"{{letter}}\":",
+        "start_recording": "Aufnahme \"{{letter}}\" starten",
+        "recording_active": "\"{{letter}}\" wird aufgenommen — Zeichen ruhig halten!",
+        "stop_recording": "⏹ Aufnahme stoppen",
+        "samples_progress": "{{recorded}} / {{target}} Proben ({{percent}}%)",
+        "tips_title": "Aufnahme-Tipps:",
+        "tip1": "Das ASL-Zeichen machen und 3 Sekunden ruhig halten",
+        "tip2": "Jeden Buchstaben 10–15 Mal mit leichten Positionsvariationen aufnehmen",
+        "tip3": "Variieren: Handwinkel, Fingerstärke, Handgelenkdrehung",
+        "tip4": "Bei IMU-Buchstaben: Handgelenksorientierung übertreiben — das Modell nutzt dies zur Familientrennung",
+        "tip5": "V vs U: V Handfläche nach vorne, U Handfläche zu Ihnen — Handgelenk bei U-Aufnahme gesperrt halten",
+        "tip6": "A vs T: gleiche Faustform, Daumenposition verschieden — sehr ruhig halten",
+        "tip7": "E vs S: beide geschlossene Fäuste, verschiedene Daumenplatzierung — Unterschied übertreiben",
+        "tip8": "CSV-Spalten: Bezeichnung, ch0–ch4 (normalisiert), qw, qx, qy, qz"
+    },
+    "sensor": {
+        "title": "Echtzeit-Sensorwerte",
+        "live": "🔴 Live (gleitendes Fenster)",
+        "filling": "⏳ Fenster wird gefüllt...",
+        "collecting": "📊 Wird gesammelt",
+        "idle": "⏸ Bereit",
+        "buffer_cleared": "🔄 Puffer geleert",
+        "window": "Fenster: {{current}}/{{target}}",
+        "samples_counter": "{{current}}/{{target}} Proben",
+        "no_data": "Noch keine Sensordaten...",
+        "legend_bent": "Gebeugt",
+        "legend_partial": "Teilweise",
+        "legend_straight": "Gestreckt"
+    },
+    "hand_viz": {
+        "title": "3D-Handvisualisierung",
+        "realtime_pose": "Echtzeit-Handpose",
+        "waiting": "Warte auf Daten...",
+        "prediction_label": "Vorhersage:",
+        "confidence_label": "Konfidenz:",
+        "axes_on": "📐 Achsen An",
+        "axes_off": "📐 Achsen Aus",
+        "recalibrate": "📍 Neu kalibrieren",
+        "set_reference": "📍 Referenz setzen",
+        "hint": "Simulator starten oder Handschuh verbinden um Echtzeit-Handpose zu sehen",
+        "test_straight": "🖐️ Gestreckt",
+        "test_bent": "✊ Gebeugt"
+    },
+    "flex_graph": {
+        "title": "Flex-Verlauf",
+        "norm": "Norm",
+        "raw": "Roh",
+        "hide_all": "Alle ausblenden",
+        "show_all": "Alle einblenden",
+        "collapse": "Diagramm verkleinern",
+        "expand": "Diagramm vergrößern",
+        "waiting": "Warte auf Daten…"
+    }
+}

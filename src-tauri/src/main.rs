@@ -531,6 +531,11 @@ fn start_reading_serial(
     thread::spawn(move || {
         let mut buffer = String::new();
         let mut first_line_skipped = false; // Skip first line (might be partial after reconnect)
+        // Spike filter: track last accepted flex value per channel.
+        // If a new reading jumps by more than SPIKE_THRESHOLD in one frame
+        // (hardware glitch / loose connector), keep the previous value instead.
+        const SPIKE_THRESHOLD: i64 = 2500;
+        let mut prev_flex: [i64; 5] = [-1; 5]; // -1 = not yet initialised
         
         loop {
             let is_reading = {
@@ -558,6 +563,15 @@ fn start_reading_serial(
                 break;
             }
             
+            // If the OS input buffer has built up a large backlog (e.g. >2 KB),
+            // flush it so we stay on the freshest data instead of replaying old lines.
+            if let Ok(queued) = port_lock.as_mut().unwrap().bytes_to_read() {
+                if queued > 2000 {
+                    let _ = port_lock.as_mut().unwrap().clear(serialport::ClearBuffer::Input);
+                    buffer.clear();
+                }
+            }
+
             // Read bytes from serial port continuously (no sleep!)
             let mut serial_buf: Vec<u8> = vec![0; 256]; // Larger buffer
             match port_lock.as_mut().unwrap().read(&mut serial_buf) {
@@ -589,15 +603,25 @@ fn start_reading_serial(
                             let values: Vec<&str> = line.split(',').collect();
 
                             if values.len() == 15 {
-                                let thermistors: Vec<i32> = values[..5]
+                                let raw_flex: Vec<i64> = values[..5]
                                     .iter()
-                                    .filter_map(|s| s.trim().parse::<i32>().ok())
+                                    .filter_map(|s| s.trim().parse::<i64>().ok())
                                     .collect();
                                 let floats: Vec<f32> = values[5..]
                                     .iter()
                                     .filter_map(|s| s.trim().parse::<f32>().ok())
                                     .collect();
-                                if thermistors.len() == 5 && floats.len() == 10 {
+                                if raw_flex.len() == 5 && floats.len() == 10 {
+                                    // Apply per-channel spike filter
+                                    let thermistors: Vec<i32> = raw_flex.iter().enumerate().map(|(i, &v)| {
+                                        let accepted = if prev_flex[i] < 0 || (v - prev_flex[i]).abs() <= SPIKE_THRESHOLD {
+                                            v
+                                        } else {
+                                            prev_flex[i] // reject spike, hold previous
+                                        };
+                                        prev_flex[i] = accepted;
+                                        accepted as i32
+                                    }).collect();
                                     let _ = window.emit("serial-data", &thermistors);
                                     let _ = window.emit("serial-imu", serde_json::json!({
                                         "w": floats[0], "x": floats[1],
@@ -610,16 +634,25 @@ fn start_reading_serial(
                                 }
                             } else if values.len() == 9 {
                                 // v3 format: 5 thermistors + 4 quaternion floats (w, x, y, z)
-                                let thermistors: Vec<i32> = values[..5]
+                                let raw_flex9: Vec<i64> = values[..5]
                                     .iter()
-                                    .filter_map(|s| s.trim().parse::<i32>().ok())
+                                    .filter_map(|s| s.trim().parse::<i64>().ok())
                                     .collect();
                                 let quats: Vec<f32> = values[5..]
                                     .iter()
                                     .filter_map(|s| s.trim().parse::<f32>().ok())
                                     .collect();
                                 
-                                if thermistors.len() == 5 && quats.len() == 4 {
+                                if raw_flex9.len() == 5 && quats.len() == 4 {
+                                    let thermistors: Vec<i32> = raw_flex9.iter().enumerate().map(|(i, &v)| {
+                                        let accepted = if prev_flex[i] < 0 || (v - prev_flex[i]).abs() <= SPIKE_THRESHOLD {
+                                            v
+                                        } else {
+                                            prev_flex[i]
+                                        };
+                                        prev_flex[i] = accepted;
+                                        accepted as i32
+                                    }).collect();
                                     let _ = window.emit("serial-data", &thermistors);
                                     let _ = window.emit("serial-imu", serde_json::json!({
                                         "w": quats[0], "x": quats[1],
@@ -652,6 +685,293 @@ fn start_reading_serial(
     });
     
     Ok(())
+}
+
+// ── Python model server ────────────────────────────────────────────────────────
+// Spawns `serve_local_model_one.py` as a background child process, pipes its
+// stderr into a shared buffer so the frontend can read crash output, and kills
+// the process when the user disables the local-model toggle.
+
+type OutputBuf = Arc<Mutex<String>>;
+
+struct PythonServerState {
+    child:      Option<std::process::Child>,
+    output_buf: OutputBuf,   // stderr (and stdout) captured from the child
+}
+impl PythonServerState {
+    fn new() -> Self {
+        Self { child: None, output_buf: Arc::new(Mutex::new(String::new())) }
+    }
+}
+type PythonServerShared = Arc<Mutex<PythonServerState>>;
+
+/// Build an ordered list of Python executables to try, preferring any `.venv`
+/// inside the project's `iot-sign-glove` directory so the correct packages are used.
+fn python_candidates(work_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut v: Vec<std::path::PathBuf> = Vec::new();
+
+    // 1. Project-local virtual environment (most reliable for this project)
+    #[cfg(target_os = "windows")]
+    {
+        v.push(work_dir.join(".venv").join("Scripts").join("python.exe"));
+        v.push(work_dir.join("venv").join("Scripts").join("python.exe"));
+        v.push(work_dir.join("env").join("Scripts").join("python.exe"));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        v.push(work_dir.join(".venv").join("bin").join("python"));
+        v.push(work_dir.join("venv").join("bin").join("python"));
+        v.push(work_dir.join("env").join("bin").join("python"));
+    }
+
+    // 2. System Python from PATH
+    #[cfg(target_os = "windows")]
+    {
+        v.push(std::path::PathBuf::from("python"));
+        v.push(std::path::PathBuf::from("python3"));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        v.push(std::path::PathBuf::from("python3"));
+        v.push(std::path::PathBuf::from("python"));
+    }
+
+    v
+}
+
+/// Attempt to spawn the script with the first Python executable that works.
+/// Returns the child process and a description of which Python was used.
+fn try_spawn(
+    script_path: &std::path::Path,
+    work_dir:    &std::path::Path,
+    output_buf:  &OutputBuf,
+) -> Result<(std::process::Child, String), String> {
+    use std::process::Stdio;
+
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
+    #[cfg(target_os = "windows")]
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let candidates = python_candidates(work_dir);
+    let mut last_err = String::new();
+
+    for exe in &candidates {
+        let mut cmd = Command::new(exe);
+        cmd.arg(script_path)
+           .current_dir(work_dir)
+           .stdout(Stdio::piped())
+           .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                // Drain stdout + stderr into the shared buffer in background threads
+                let buf_clone = Arc::clone(output_buf);
+                if let Some(stdout) = child.stdout.take() {
+                    let buf2 = Arc::clone(&buf_clone);
+                    thread::spawn(move || {
+                        use std::io::BufRead;
+                        for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+                            if let Ok(mut b) = buf2.lock() { b.push_str(&line); b.push('\n'); }
+                        }
+                    });
+                }
+                if let Some(stderr) = child.stderr.take() {
+                    thread::spawn(move || {
+                        use std::io::BufRead;
+                        for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+                            if let Ok(mut b) = buf_clone.lock() { b.push_str(&line); b.push('\n'); }
+                        }
+                    });
+                }
+                let desc = exe.to_string_lossy().to_string();
+                println!("[python_server] Spawned with: {}", desc);
+                return Ok((child, desc));
+            }
+            Err(e) => {
+                last_err = format!("{}: {}", exe.display(), e);
+            }
+        }
+    }
+
+    Err(format!(
+        "No working Python executable found. Tried: {:?}\nLast error: {}",
+        candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        last_err,
+    ))
+}
+
+/// Locate the project root by walking up from the current executable.
+///
+/// Dev layout:   <project_root>/src-tauri/target/debug/<exe>   → up 3 from exe dir
+/// Prod layout:  <install_dir>/<exe>                            → use the install dir itself
+///               (production doesn't use this dev feature)
+fn find_project_root() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+
+    // Walk up from the exe directory and look for a directory that contains both
+    // "src-tauri" and "iot-sign-glove" — that is the project root.
+    let mut dir = exe_dir.to_path_buf();
+    for _ in 0..6 {
+        if dir.join("src-tauri").exists() && dir.join("iot-sign-glove").exists() {
+            return Some(dir);
+        }
+        match dir.parent() {
+            Some(p) => dir = p.to_path_buf(),
+            None    => break,
+        }
+    }
+    None
+}
+
+/// Spawn a pre-built standalone executable (PyInstaller bundle) directly —
+/// no Python interpreter required.
+fn spawn_exe_directly(
+    exe_path:   &std::path::Path,
+    output_buf: &OutputBuf,
+) -> Result<(std::process::Child, String), String> {
+    use std::process::Stdio;
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
+    #[cfg(target_os = "windows")]
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let mut cmd = Command::new(exe_path);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    match cmd.spawn() {
+        Ok(mut child) => {
+            let buf_clone = Arc::clone(output_buf);
+            if let Some(stdout) = child.stdout.take() {
+                let buf2 = Arc::clone(&buf_clone);
+                thread::spawn(move || {
+                    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                        if let Ok(mut b) = buf2.lock() { b.push_str(&line); b.push('\n'); }
+                    }
+                });
+            }
+            if let Some(stderr) = child.stderr.take() {
+                thread::spawn(move || {
+                    for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                        if let Ok(mut b) = buf_clone.lock() { b.push_str(&line); b.push('\n'); }
+                    }
+                });
+            }
+            let desc = exe_path.to_string_lossy().to_string();
+            println!("[python_server] Spawned bundled exe: {}", desc);
+            Ok((child, desc))
+        }
+        Err(e) => Err(format!("Failed to spawn bundled server exe: {}", e)),
+    }
+}
+
+/// Start the local Python model server.
+///
+/// Production path  – uses the PyInstaller-built exe bundled as a Tauri resource.
+///                    No Python installation required on the end-user's machine.
+/// Development path – falls back to running the .py script with the .venv Python,
+///                    so hot-editing the script still works during development.
+#[tauri::command]
+fn start_python_server(
+    handle: tauri::AppHandle,
+    state:  tauri::State<PythonServerShared>,
+) -> Result<String, String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+
+    // Kill any previously running instance and wait briefly so the OS can
+    // release the TCP port from TIME_WAIT before the new process tries to bind.
+    if let Some(mut child) = s.child.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+        // Give Windows ~2 s to recycle the socket; the Python script will also
+        // retry binding for up to 30 s, so this is belt-and-suspenders.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    // Clear old output
+    if let Ok(mut b) = s.output_buf.lock() { b.clear(); }
+
+    // ── Production: try the bundled PyInstaller exe ──────────────────────────
+    // The exe is listed in tauri.conf.json resources and bundled into the
+    // installer. It includes Python + all packages + the model file, so the
+    // end-user needs nothing extra installed.
+    if let Some(bundled_exe) = handle.path_resolver().resolve_resource("resources/model-server/serve_local_model_one.exe") {
+        if bundled_exe.exists() {
+            println!("[python_server] Production mode: using bundled exe at {}", bundled_exe.display());
+            let (child, desc) = spawn_exe_directly(&bundled_exe, &s.output_buf)?;
+            s.child = Some(child);
+            return Ok(format!("Python server starting (bundled: {})", desc));
+        }
+    }
+
+    // ── Development: find project root and run the .py script via .venv ─────
+    let project_root = find_project_root().ok_or_else(|| {
+        format!(
+            "Could not locate project root from exe: {}\n\
+             Expected to find a directory containing both 'src-tauri' and 'iot-sign-glove'.",
+            std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default()
+        )
+    })?;
+
+    let script_path = project_root
+        .join("iot-sign-glove")
+        .join("scripts")
+        .join("serve_local_model_one.py");
+
+    if !script_path.exists() {
+        return Err(format!(
+            "Script not found: {}\nProject root detected as: {}",
+            script_path.display(),
+            project_root.display()
+        ));
+    }
+
+    let work_dir = project_root.join("iot-sign-glove");
+
+    println!("[python_server] Dev mode: script={} workdir={}", script_path.display(), work_dir.display());
+
+    let (child, used_exe) = try_spawn(&script_path, &work_dir, &s.output_buf)?;
+    s.child = Some(child);
+    Ok(format!("Python server starting (using {})", used_exe))
+}
+
+/// Stop the local Python model server.
+#[tauri::command]
+fn stop_python_server(state: tauri::State<PythonServerShared>) -> Result<String, String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    if let Some(mut child) = s.child.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok("Python server stopped".to_string())
+    } else {
+        Ok("No Python server was running".to_string())
+    }
+}
+
+/// Returns `true` if the process is still alive, `false` if it has exited.
+#[tauri::command]
+fn python_server_status(state: tauri::State<PythonServerShared>) -> bool {
+    let mut s = match state.lock() { Ok(s) => s, Err(_) => return false };
+    let alive = match s.child.as_mut() {
+        None        => false,
+        Some(child) => matches!(child.try_wait(), Ok(None)),
+    };
+    if !alive { s.child = None; }
+    alive
+}
+
+/// Return whatever stdout/stderr the Python process has written so far.
+/// Useful for diagnosing startup failures.
+#[tauri::command]
+fn python_server_output(state: tauri::State<PythonServerShared>) -> String {
+    let s = match state.lock() { Ok(s) => s, Err(_) => return String::new() };
+    s.output_buf.lock().map(|b| b.clone()).unwrap_or_default()
 }
 
 /// Launch the Unity digital-twin executable.
@@ -965,6 +1285,7 @@ fn main() {
     let unity_pipe: UnityPipeShared = Arc::new(Mutex::new(UnityPipeState::new()));
     let webgl_server: WebGLServerShared = Arc::new(Mutex::new(WebGLServerState::new()));
     let wifi_state: WifiStateShared = Arc::new(Mutex::new(None));
+    let python_server: PythonServerShared = Arc::new(Mutex::new(PythonServerState::new()));
 
     tauri::Builder::default()
         .manage(serial_state)
@@ -972,6 +1293,7 @@ fn main() {
         .manage(unity_pipe)
         .manage(webgl_server)
         .manage(wifi_state)
+        .manage(python_server)
         .invoke_handler(tauri::generate_handler![
             tts_say,
             list_ports,
@@ -990,6 +1312,10 @@ fn main() {
             stop_webgl_server,
             connect_wifi,
             disconnect_wifi,
+            start_python_server,
+            stop_python_server,
+            python_server_status,
+            python_server_output,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

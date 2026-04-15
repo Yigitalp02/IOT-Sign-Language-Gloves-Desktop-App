@@ -3,7 +3,8 @@
         "title": "IoT İşaret Dili",
         "subtitle": "ASL Tanıma Sistemi",
         "footer": "Makine öğrenimi ve sensör eldiven teknolojisi ile gerçek zamanlı Amerikan İşaret Dili tanıma.",
-        "version": "Sürüm 0.4.0 | Bilgisayar Mühendisliği Bitirme Projesi | Yiğit Alp Bilgin"
+        "version": "Sürüm 1.0.0 | Bilgisayar Mühendisliği Bitirme Projesi | Yiğit Alp Bilgin",
+        "asl_recognition": "ASL Tanıma"
     },
     "input": {
         "label": "Konuşulacak metni girin:",
@@ -34,7 +35,14 @@
         "confidence": "Güven",
         "samples": "Örnek",
         "time": "Süre",
-        "model": "Model"
+        "model": "Model",
+        "letters_detected_one": "{{count}} harf algılandı",
+        "letters_detected_other": "{{count}} harf algılandı",
+        "speak": "Seslendir",
+        "delete": "Sil",
+        "clear": "Temizle",
+        "last_letter": "Son harf:",
+        "confidence_label": "Güven:"
     },
     "settings": {
         "theme": "Tema",
@@ -49,5 +57,146 @@
         "success_tr": "Başarıyla Türkçe konuşuldu",
         "success_en": "Başarıyla İngilizce konuşuldu",
         "error_empty": "Hata: Lütfen konuşulacak bir metin girin."
+    },
+    "recognition": {
+        "label": "Tanıma Modu",
+        "single": "Tek Harf Modu (Gerçek zamanlı tahmin)",
+        "continuous": "Sürekli Mod (Gerçek zamanlı kelime oluşturma)",
+        "single_desc": "🔴 CANLI: 50 örneklik kayan pencere ile gerçek zamanlı tahminler (1 sn). Hızlı harf geçişleri!",
+        "continuous_desc": "🔴 CANLI: Kelime oluşturarak gerçek zamanlı tahminler. Saniyede 5 güncelleme — her harfi sabit tutun!"
+    },
+    "continuous": {
+        "title": "Sürekli Mod Ayarları",
+        "min_confidence": "Harf eklemek için minimum güven",
+        "lenient": "%10 (esnek)",
+        "strict": "%95 (katı)",
+        "repeat_window": "Aynı harf tekrar penceresi",
+        "fast": "200ms (hızlı)",
+        "slow": "2000ms (yavaş)",
+        "repeat_hint": "Aynı harfin tekrar eklenebilmesi için ne kadar süre tutulması gerektiği."
+    },
+    "dev": {
+        "local_model": "Yerel model kullan (geliştirici)",
+        "stable_mode": "Kararlı mod"
+    },
+    "log": {
+        "title": "📊 Seri Veri Günlüğü (Son 100 örnek)",
+        "copy": "📋 Tümünü Kopyala",
+        "clear": "🗑️ Temizle",
+        "copied": "Panoya kopyalandı!",
+        "cols": "Sütunlar: Başparmak, İşaret, Orta, Yüzük, Serçe | qw qx qy qz | lx ly lz (doğrusal ivme m/s²) | gx gy gz (jiroskop derece/sn)"
+    },
+    "twin": {
+        "title": "3D Dijital İkiz",
+        "subtitle": "WebGL · Canlı El Pozu",
+        "reset": "↺ Sıfırla",
+        "recalibrate": "⊕ Yeniden Kalibre Et",
+        "serving": "sunuluyor :8787"
+    },
+    "fingers": {
+        "thumb": "Başparmak",
+        "index": "İşaret",
+        "middle": "Orta",
+        "ring": "Yüzük",
+        "pinky": "Serçe"
+    },
+    "calibrator": {
+        "title": "Sensör Kalibratörü",
+        "per_finger_desc": "Her parmağı ayrı ayrı kalibre edin",
+        "full_hand_desc": "Tüm parmakları aynı anda kalibre edin (tam el)",
+        "per_finger_btn": "☝️ Tek Parmak",
+        "full_hand_btn": "✋ Tam El",
+        "connect_first": "Lütfen önce eldiveninizi bağlayın",
+        "calibrating_all": "Kalibre ediliyor: Tüm Parmaklar",
+        "calibrating_finger": "Kalibre ediliyor: {{finger}}",
+        "recalibrate": "Yeniden Kalibre Et",
+        "redo": "Tekrar Yap",
+        "step1_title_all": "Adım 1: Tüm Parmakları Düzleştirin",
+        "step1_title": "Adım 1: {{finger}} Parmağını Düzleştirin",
+        "step1_desc_all": "Elinizi düz tutun, tüm parmaklar tamamen uzatılmış",
+        "step1_desc": "{{finger}} parmağını tamamen düz tutun",
+        "step2_title_all": "Adım 2: Tüm Parmakları Bükin",
+        "step2_title": "Adım 2: {{finger}} Parmağını Bükin",
+        "step2_desc_all": "Yumruk yapın, tüm parmaklar tamamen kıvrılmış",
+        "step2_desc": "{{finger}} parmağını tamamen bükün",
+        "record": "Kaydet",
+        "done": "✓ Tamam",
+        "all_calibrated_check": "Tüm parmaklar kalibre edildi ✓",
+        "finger_calibrated": "{{finger}} kalibre edildi ✓",
+        "all_fingers_calibrated": "Tüm Parmaklar Kalibre Edildi",
+        "partial_calibrated": "{{count}}/5 Parmak Kalibre Edildi",
+        "partial_hint": "Şimdi uygulayabilirsiniz — kalibre edilmemiş parmaklar mevcut varsayılanları kullanacak.",
+        "apply_all": "Tümünü Uygula",
+        "apply_partial": "{{count}} Parmağı Uygula",
+        "reset_all": "Tümünü Sıfırla",
+        "samples_progress": "{{count}}/{{total}} örnek",
+        "straight_label": "Düz",
+        "bent_label": "Bükülü",
+        "default_label": "(varsayılan)"
+    },
+    "recorder": {
+        "title": "📊 Eğitim için Veri Kaydı",
+        "connect_first": "⚠️ Önce eldiveni bağlayın!",
+        "description": "Her ASL harfi için etiketli örnekler toplayın.",
+        "left_hand": "Sol el eldiveni",
+        "left_hand_note": "— işaretler standart ASL diyagramlarının aynasıdır.",
+        "best_practice": "En İyi Uygulama:",
+        "best_practice_desc": "Her harf için 10–15 seans kaydedin, her seferinde el pozisyonunu hafifçe değiştirin. BNO055 bağlıyken IMU verisi otomatik olarak kaydedilir.",
+        "select_letter": "Kaydedilecek Harfi Seçin:",
+        "flex_only": "Yalnızca flex sensörler",
+        "flex_imu": "Flex + IMU yönelimi",
+        "bno_required": "(BNO055 gerekli)",
+        "orientation_hint": "\"{{letter}}\" için sol el yönelimi:",
+        "start_recording": "\"{{letter}}\" Kaydını Başlat",
+        "recording_active": "\"{{letter}}\" kaydediliyor — İşareti sabit tutun!",
+        "stop_recording": "⏹ Kaydı Durdur",
+        "samples_progress": "{{recorded}} / {{target}} örnek (%{{percent}})",
+        "tips_title": "Kayıt İpuçları:",
+        "tip1": "ASL işaretini yapın ve 3 saniye sabit tutun",
+        "tip2": "Her harfi 10–15 kez, pozisyonu biraz değiştirerek kaydedin",
+        "tip3": "Değiştirin: el açısı, parmak sıkılığı, bilek dönüşü",
+        "tip4": "IMU harfleri için: bilek yönelimini abartın — model bunu aile üyelerini ayırt etmek için kullanır",
+        "tip5": "V ile U: V avuç içi öne bakar, U avuç içi size bakar — U kaydederken bileği sabit tutun",
+        "tip6": "A ile T: aynı yumruk şekli, başparmak pozisyonu farklı — çok sabit tutun",
+        "tip7": "E ile S: her ikisi de kapalı yumruk, farklı başparmak yerleşimi — farkı abartın",
+        "tip8": "CSV sütunları: etiket, ch0–ch4 (normalleştirilmiş), qw, qx, qy, qz"
+    },
+    "sensor": {
+        "title": "Gerçek Zamanlı Sensör Değerleri",
+        "live": "🔴 Canlı (kayan pencere)",
+        "filling": "⏳ Pencere dolduruluyor...",
+        "collecting": "📊 Toplanıyor",
+        "idle": "⏸ Bekleniyor",
+        "buffer_cleared": "🔄 Tampon Temizlendi",
+        "window": "Pencere: {{current}}/{{target}}",
+        "samples_counter": "{{current}}/{{target}} örnek",
+        "no_data": "Henüz sensör verisi yok...",
+        "legend_bent": "Bükülü",
+        "legend_partial": "Kısmi",
+        "legend_straight": "Düz"
+    },
+    "hand_viz": {
+        "title": "3D El Görselleştirme",
+        "realtime_pose": "Gerçek Zamanlı El Pozu",
+        "waiting": "Veri bekleniyor...",
+        "prediction_label": "Tahmin:",
+        "confidence_label": "Güven:",
+        "axes_on": "📐 Eksenler Açık",
+        "axes_off": "📐 Eksenler Kapalı",
+        "recalibrate": "📍 Yeniden Kalibre Et",
+        "set_reference": "📍 Referansı Ayarla",
+        "hint": "Gerçek zamanlı el pozunu görmek için simülatörü başlatın veya eldiveni bağlayın",
+        "test_straight": "🖐️ Düz",
+        "test_bent": "✊ Bükülü"
+    },
+    "flex_graph": {
+        "title": "Flex Geçmişi",
+        "norm": "Norm",
+        "raw": "Ham",
+        "hide_all": "Tümünü Gizle",
+        "show_all": "Tümünü Göster",
+        "collapse": "Grafiği Küçült",
+        "expand": "Grafiği Büyüt",
+        "waiting": "Veri bekleniyor…"
     }
 }

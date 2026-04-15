@@ -1,11 +1,12 @@
 {
   "name": "iot-sign-language-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "packageManager": "pnpm@8.15.0",
   "scripts": {
     "dev": "vite",
+    "prebuild": "powershell -ExecutionPolicy Bypass -File scripts/build_model_server.ps1",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

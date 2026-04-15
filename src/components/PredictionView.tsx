@@ -148,7 +148,7 @@ export default function PredictionView({
         </div>
         
         <p className="continuous-mode-hint">
-          {currentWord.length} letter{currentWord.length !== 1 ? 's' : ''} detected
+          {t('prediction.letters_detected_other', { count: currentWord.length })}
         </p>
 
         {/* Action Buttons */}
@@ -157,7 +157,7 @@ export default function PredictionView({
             className="action-button speak-button"
             onClick={() => handleSpeak(currentWord)}
           >
-            Speak
+            {t('prediction.speak')}
           </button>
 
           {onDeleteLetter && (
@@ -165,7 +165,7 @@ export default function PredictionView({
               className="action-button delete-button"
               onClick={onDeleteLetter}
             >
-              Delete
+              {t('prediction.delete')}
             </button>
           )}
 
@@ -174,7 +174,7 @@ export default function PredictionView({
               className="action-button clear-button"
               onClick={onClearWord}
             >
-              Clear
+              {t('prediction.clear')}
             </button>
           )}
         </div>
@@ -182,11 +182,11 @@ export default function PredictionView({
         {prediction && (
           <div className="metadata">
             <div className="metadata-item">
-              <span className="metadata-label">Last letter:</span>
+              <span className="metadata-label">{t('prediction.last_letter')}</span>
               <span className="metadata-value">{prediction.letter}</span>
             </div>
             <div className="metadata-item">
-              <span className="metadata-label">Confidence:</span>
+              <span className="metadata-label">{t('prediction.confidence_label')}</span>
               <span 
                 className="metadata-value" 
                 style={{ color: getConfidenceColor(prediction.confidence) }}
@@ -238,7 +238,7 @@ export default function PredictionView({
             className={`single-letter-sign-image ${theme === 'dark' ? 'dark-mode' : ''}`}
           />
           <p className="sign-hint-text confidence-inline" style={{ color: confidenceColor }}>
-            <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>Confidence: </span>
+            <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>{t('prediction.confidence_label')} </span>
             {confidencePercent}%
           </p>
         </div>
