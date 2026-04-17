@@ -1151,10 +1151,113 @@ fn stop_webgl_server(state: tauri::State<WebGLServerShared>) -> Result<(), Strin
     }
 }
 
+// ── mDNS hostname resolver ────────────────────────────────────────────────────
+// Windows does not resolve .local hostnames via its standard DNS stack unless
+// Apple Bonjour (or a similar mDNS daemon) is installed.  This function sends
+// a DNS A-record query directly to the mDNS multicast group (224.0.0.251:5353)
+// using only std::net — no extra crates required.
+
+/// Build a minimal DNS query packet for an A record (QU bit set → unicast reply).
+fn build_mdns_query(hostname: &str) -> Vec<u8> {
+    let mut pkt: Vec<u8> = Vec::new();
+    // Header
+    pkt.extend_from_slice(&[0x00, 0x00]); // ID = 0 (mDNS convention)
+    pkt.extend_from_slice(&[0x00, 0x00]); // Flags: standard query
+    pkt.extend_from_slice(&[0x00, 0x01]); // QDCOUNT = 1
+    pkt.extend_from_slice(&[0x00, 0x00]); // ANCOUNT = 0
+    pkt.extend_from_slice(&[0x00, 0x00]); // NSCOUNT = 0
+    pkt.extend_from_slice(&[0x00, 0x00]); // ARCOUNT = 0
+    // QNAME: encode each label preceded by its length
+    for label in hostname.trim_end_matches('.').split('.') {
+        pkt.push(label.len() as u8);
+        pkt.extend_from_slice(label.as_bytes());
+    }
+    pkt.push(0x00); // root label terminator
+    pkt.extend_from_slice(&[0x00, 0x01]); // QTYPE  = A (1)
+    pkt.extend_from_slice(&[0x80, 0x01]); // QCLASS = IN (1) | QU bit (0x8000)
+    pkt
+}
+
+/// Advance `pos` past a DNS name (handles compression pointers).
+/// Returns the new position after the name, or None on malformed input.
+fn skip_dns_name(pkt: &[u8], mut pos: usize) -> Option<usize> {
+    loop {
+        if pos >= pkt.len() { return None; }
+        let b = pkt[pos] as usize;
+        if b == 0 { return Some(pos + 1); }      // root label
+        if b & 0xC0 == 0xC0 { return Some(pos + 2); } // compression pointer
+        pos += b + 1;
+    }
+}
+
+/// Parse the first A record from an mDNS / DNS response packet.
+fn parse_mdns_a_response(pkt: &[u8]) -> Option<std::net::Ipv4Addr> {
+    if pkt.len() < 12 { return None; }
+    let qdcount = u16::from_be_bytes([pkt[4], pkt[5]]) as usize;
+    let ancount = u16::from_be_bytes([pkt[6], pkt[7]]) as usize;
+    if ancount == 0 { return None; }
+
+    // Skip question section
+    let mut pos = 12usize;
+    for _ in 0..qdcount {
+        pos = skip_dns_name(pkt, pos)?;
+        pos = pos.checked_add(4)?; // QTYPE(2) + QCLASS(2)
+    }
+
+    // Walk answer records looking for the first A record
+    for _ in 0..ancount {
+        pos = skip_dns_name(pkt, pos)?;
+        if pos + 10 > pkt.len() { return None; }
+        let rtype  = u16::from_be_bytes([pkt[pos],   pkt[pos+1]]);
+        let rdlen  = u16::from_be_bytes([pkt[pos+8], pkt[pos+9]]) as usize;
+        pos += 10; // TYPE(2)+CLASS(2)+TTL(4)+RDLEN(2)
+        if rtype == 1 && rdlen == 4 && pos + 4 <= pkt.len() {
+            return Some(std::net::Ipv4Addr::new(
+                pkt[pos], pkt[pos+1], pkt[pos+2], pkt[pos+3],
+            ));
+        }
+        pos = pos.checked_add(rdlen)?;
+    }
+    None
+}
+
+/// Resolve a `.local` mDNS hostname to an IPv4 address.
+/// Sends a QU (unicast-response) query to 224.0.0.251:5353 and waits up to
+/// `timeout_ms` milliseconds for a response.  Returns None on failure.
+fn resolve_mdns(hostname: &str, timeout_ms: u64) -> Option<std::net::IpAddr> {
+    use std::net::UdpSocket;
+
+    let pkt = build_mdns_query(hostname);
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.set_read_timeout(Some(Duration::from_millis(timeout_ms))).ok()?;
+    socket.set_multicast_ttl_v4(1).ok(); // link-local only
+
+    // Join the mDNS multicast group so we can receive multicast responses
+    // (ESP32 may reply with multicast even when QU bit is set).
+    let mdns_group = "224.0.0.251".parse::<std::net::Ipv4Addr>().unwrap();
+    socket.join_multicast_v4(&mdns_group, &std::net::Ipv4Addr::UNSPECIFIED).ok();
+
+    socket.send_to(&pkt, "224.0.0.251:5353").ok()?;
+
+    let mut buf = [0u8; 1500];
+    let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+
+    while std::time::Instant::now() < deadline {
+        match socket.recv_from(&mut buf) {
+            Ok((len, _src)) => {
+                if let Some(ip) = parse_mdns_a_response(&buf[..len]) {
+                    return Some(std::net::IpAddr::V4(ip));
+                }
+            }
+            Err(_) => break, // timeout
+        }
+    }
+    None
+}
+
 // ── WiFi TCP client ───────────────────────────────────────────────────────────
 // Connects to the ESP32's TCP server and reads the same CSV lines as USB serial,
 // emitting identical "serial-data" / "serial-imu" events.
-// Supports both IP addresses (192.168.x.x) and mDNS hostnames (glove.local).
 
 type WifiStopFlag  = Arc<AtomicBool>;
 type WifiStateShared = Arc<Mutex<Option<WifiStopFlag>>>;
@@ -1175,9 +1278,30 @@ fn connect_wifi(
     }
     thread::sleep(Duration::from_millis(150));
 
-    let addr = format!("{}:{}", host, port);
+    // For .local hostnames, bypass the Windows DNS stack (which doesn't support
+    // mDNS) and resolve via multicast DNS directly.
+    let resolved_host = if host.to_lowercase().ends_with(".local") {
+        match resolve_mdns(&host, 3000) {
+            Some(ip) => {
+                println!("[WiFi] mDNS resolved {} → {}", host, ip);
+                ip.to_string()
+            }
+            None => {
+                return Err(format!(
+                    "Cannot resolve \"{}\" via mDNS.\n\
+                     Make sure your PC and the glove are on the same WiFi network.\n\
+                     Tip: enter the glove's IP address directly instead (e.g. 192.168.4.1).",
+                    host
+                ));
+            }
+        }
+    } else {
+        host.clone()
+    };
 
-    // Resolve hostname (handles both IPs and mDNS names like glove.local)
+    let addr = format!("{}:{}", resolved_host, port);
+
+    // Standard TCP connect (works for both raw IPs and already-resolved addresses)
     use std::net::ToSocketAddrs;
     let socket_addr = addr
         .to_socket_addrs()

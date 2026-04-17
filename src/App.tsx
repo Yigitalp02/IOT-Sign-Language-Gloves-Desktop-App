@@ -84,6 +84,10 @@ function App() {
   // Reference quaternion captured from the first IMU sample each Unity session.
   // Mirrors HandVisualization3D's refQuat so both show the same relative orientation.
   const unityRefQuatRef = useRef<Quat | null>(null);
+  // Lock spatial movement: when true, motion/gyro payload is omitted so the twin
+  // only shows finger flex + wrist orientation without translating in space.
+  const [lockSpatial, setLockSpatial] = useState(false);
+  const lockSpatialRef = useRef(false);
 
   // WebGL twin (embedded iframe)
   const [webglEnabled,       setWebglEnabled]       = useState(false);
@@ -584,7 +588,7 @@ function App() {
       }
 
       if (webglEnabledRef.current && webglIframeRef.current?.contentWindow) {
-        const motion = currentMotionRef.current;
+        const motion = lockSpatialRef.current ? null : currentMotionRef.current;
         webglIframeRef.current.contentWindow.postMessage(
           {
             type: 'sensorData',
@@ -1142,6 +1146,33 @@ function App() {
                     }}
                   >
                     {t('twin.recalibrate')}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const next = !lockSpatialRef.current;
+                      lockSpatialRef.current = next;
+                      setLockSpatial(next);
+                    }}
+                    title={lockSpatial
+                      ? 'Spatial movement is locked — click to allow hand translation again'
+                      : 'Lock spatial position: twin shows only finger flex and wrist rotation'}
+                    style={{
+                      padding: '0.2rem 0.6rem',
+                      borderRadius: '5px',
+                      border: lockSpatial
+                        ? '1px solid rgba(251,191,36,0.5)'
+                        : '1px solid rgba(100,116,139,0.35)',
+                      background: lockSpatial
+                        ? 'rgba(251,191,36,0.12)'
+                        : 'rgba(100,116,139,0.08)',
+                      color: lockSpatial ? '#d97706' : 'var(--text-secondary)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {lockSpatial ? '📍 Position Locked' : '🔓 Lock Position'}
                   </button>
                 </div>
               </div>

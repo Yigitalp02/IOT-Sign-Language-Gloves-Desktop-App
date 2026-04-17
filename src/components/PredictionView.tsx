@@ -22,6 +22,7 @@ import Q_img from '../assets/asl/Q.png';
 import R_img from '../assets/asl/R.png';
 import S_img from '../assets/asl/S.png';
 import T_img from '../assets/asl/T.png';
+import U_img from '../assets/asl/U.png';
 import V_img from '../assets/asl/V.png';
 import W_img from '../assets/asl/W.png';
 import X_img from '../assets/asl/X.png';
@@ -45,6 +46,7 @@ const ASL_SIGNS: { [key: string]: string } = {
   R: R_img,
   S: S_img,
   T: T_img,
+  U: U_img,
   V: V_img,
   W: W_img,
   X: X_img,
