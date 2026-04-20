@@ -22,7 +22,17 @@
         "title": "Handschuh-Verbindung",
         "connected": "Verbunden",
         "disconnected": "Getrennt",
-        "no_ports": "Keine Geräte gefunden"
+        "no_ports": "Keine Geräte gefunden",
+        "wifi_how_to": "WiFi-Nutzung:",
+        "wifi_step1": "SSID/Passwort des Routers im Sketch setzen und ESP32 flashen",
+        "wifi_step2": "ESP32 verbindet sich mit dem Router — Laptop bleibt im gleichen Netzwerk mit Internet",
+        "wifi_step3_pre": "Unten verbinden mit",
+        "wifi_step3_post": "(mDNS) oder der IP aus dem Serial Monitor",
+        "wifi_connecting": "Verbinde…",
+        "wifi_disconnect": "WiFi trennen",
+        "wifi_connect": "Über WiFi verbinden",
+        "serial_pause": "⏸ Pause",
+        "serial_resume": "▶ Fortsetzen"
     },
     "simulator": {
         "title": "ASL-Simulator",
@@ -77,7 +87,11 @@
     },
     "dev": {
         "local_model": "Lokales Modell verwenden (Entwickler)",
-        "stable_mode": "Stabiler Modus"
+        "stable_mode": "Stabiler Modus",
+        "server_starting": "⏳ Modell wird geladen… Vorhersagen pausiert bis bereit",
+        "server_running": "🟢 Modell-Server bereit · localhost:8765",
+        "server_error": "🔴 Server fehlgeschlagen — aus-/einschalten zum Wiederholen",
+        "stable_hint": "Zeigt nur Vorhersagen mit Konfidenz ≥ {{threshold}}%"
     },
     "log": {
         "title": "📊 Serielles Datenprotokoll (Letzte 100 Proben)",
@@ -91,7 +105,11 @@
         "subtitle": "WebGL · Live-Handpose",
         "reset": "↺ Zurücksetzen",
         "recalibrate": "⊕ Neu kalibrieren",
-        "serving": "läuft auf :8787"
+        "serving": "läuft auf :8787",
+        "hide": "Zwilling ausblenden (WebGL)",
+        "show": "3D-Zwilling einbetten",
+        "lock_position": "🔓 Position sperren",
+        "position_locked": "📍 Position gesperrt"
     },
     "fingers": {
         "thumb": "Daumen",
@@ -188,6 +206,23 @@
         "hint": "Simulator starten oder Handschuh verbinden um Echtzeit-Handpose zu sehen",
         "test_straight": "🖐️ Gestreckt",
         "test_bent": "✊ Gebeugt"
+    },
+    "debug": {
+        "title": "Debug-Protokoll",
+        "simulation": "SIMULATION",
+        "duration": "Dauer:",
+        "samples": "Proben:",
+        "first": "Erste:",
+        "last": "Letzte:",
+        "api_response": "API-ANTWORT",
+        "api": "API:",
+        "letter": "Buchstabe:",
+        "confidence": "Konfidenz:",
+        "round_trip": "Roundtrip:",
+        "server_processing": "Server-Verarbeitung:",
+        "model": "Modell:",
+        "top5": "TOP 5 VORHERSAGEN",
+        "error": "FEHLER"
     },
     "flex_graph": {
         "title": "Flex-Verlauf",

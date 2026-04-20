@@ -22,7 +22,17 @@
         "title": "Glove Connection",
         "connected": "Connected",
         "disconnected": "Disconnected",
-        "no_ports": "No devices found"
+        "no_ports": "No devices found",
+        "wifi_how_to": "How to use WiFi:",
+        "wifi_step1": "Set your router SSID/password in the sketch and flash the ESP32",
+        "wifi_step2": "The ESP32 joins your router — your laptop stays on the same network with internet",
+        "wifi_step3_pre": "Connect below using",
+        "wifi_step3_post": "(mDNS) or the IP shown in Serial Monitor",
+        "wifi_connecting": "Connecting…",
+        "wifi_disconnect": "Disconnect WiFi",
+        "wifi_connect": "Connect via WiFi",
+        "serial_pause": "⏸ Pause",
+        "serial_resume": "▶ Resume"
     },
     "simulator": {
         "title": "ASL Simulator",
@@ -77,7 +87,11 @@
     },
     "dev": {
         "local_model": "Use local model (dev)",
-        "stable_mode": "Stable mode"
+        "stable_mode": "Stable mode",
+        "server_starting": "⏳ Loading model… predictions paused until ready",
+        "server_running": "🟢 Model server ready · localhost:8765",
+        "server_error": "🔴 Server failed — toggle off/on to retry",
+        "stable_hint": "Only shows predictions with confidence ≥ {{threshold}}%"
     },
     "log": {
         "title": "📊 Serial Data Log (Last 100 samples)",
@@ -91,7 +105,11 @@
         "subtitle": "WebGL · Live Hand Pose",
         "reset": "↺ Reset",
         "recalibrate": "⊕ Re-calibrate",
-        "serving": "serving :8787"
+        "serving": "serving :8787",
+        "hide": "Hide Twin (WebGL)",
+        "show": "Embed 3D Twin",
+        "lock_position": "🔓 Lock Position",
+        "position_locked": "📍 Position Locked"
     },
     "fingers": {
         "thumb": "Thumb",
@@ -188,6 +206,23 @@
         "hint": "Start the simulator or connect a glove to see real-time hand pose",
         "test_straight": "🖐️ Straight",
         "test_bent": "✊ Bent"
+    },
+    "debug": {
+        "title": "Debug Log",
+        "simulation": "SIMULATION",
+        "duration": "Duration:",
+        "samples": "Samples:",
+        "first": "First:",
+        "last": "Last:",
+        "api_response": "API RESPONSE",
+        "api": "API:",
+        "letter": "Letter:",
+        "confidence": "Confidence:",
+        "round_trip": "Round Trip:",
+        "server_processing": "Server Processing:",
+        "model": "Model:",
+        "top5": "TOP 5 PREDICTIONS",
+        "error": "ERROR"
     },
     "flex_graph": {
         "title": "Flex History",

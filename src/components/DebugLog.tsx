@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 // import { useTheme } from '../context/ThemeContext'; // Removed unused
 import './DebugLog.css';
 
@@ -26,6 +27,7 @@ interface DebugLogProps {
 
 export default function DebugLog({ data }: DebugLogProps) {
   // const { theme } = useTheme(); // Removed unused
+  const { t } = useTranslation();
   const [isVisible, setIsVisible] = useState(true);
 
   if (!data) return null;
@@ -52,7 +54,7 @@ export default function DebugLog({ data }: DebugLogProps) {
         onClick={() => setIsVisible(!isVisible)}
       >
         <span className="debug-log-header-text">
-          {isVisible ? '▼' : '▶'} Debug Log
+          {isVisible ? '▼' : '▶'} {t('debug.title')}
         </span>
         {data.apiResponse && (
           <span className="debug-log-badge">
@@ -65,20 +67,20 @@ export default function DebugLog({ data }: DebugLogProps) {
         <div className="debug-log-content">
           {/* Simulation Info */}
           <div className="debug-section">
-            <h4 className="debug-section-title simulation">SIMULATION</h4>
+            <h4 className="debug-section-title simulation">{t('debug.simulation')}</h4>
             <p className="debug-log-text">
-              Duration: {simulationDuration.toFixed(0)}ms ({(simulationDuration / 1000).toFixed(1)}s)
+              {t('debug.duration')} {simulationDuration.toFixed(0)}ms ({(simulationDuration / 1000).toFixed(1)}s)
             </p>
             <p className="debug-log-text">
-              Samples: {data.totalSamples || 0}
+              {t('debug.samples')} {data.totalSamples || 0}
             </p>
             {data.firstSample && (
               <>
                 <p className="debug-log-text">
-                  First: [{data.firstSample.map(v => v.toFixed(0)).join(', ')}]
+                  {t('debug.first')} [{data.firstSample.map(v => v.toFixed(0)).join(', ')}]
                 </p>
                 <p className="debug-log-text">
-                  Last:  [{data.lastSample?.map(v => v.toFixed(0)).join(', ')}]
+                  {t('debug.last')}  [{data.lastSample?.map(v => v.toFixed(0)).join(', ')}]
                 </p>
               </>
             )}
@@ -87,24 +89,24 @@ export default function DebugLog({ data }: DebugLogProps) {
           {/* API Info */}
           {data.apiResponse && (
             <div className="debug-section">
-              <h4 className="debug-section-title api">API RESPONSE</h4>
+              <h4 className="debug-section-title api">{t('debug.api_response')}</h4>
               <p className="debug-log-text">
-                API: <strong>{import.meta.env.VITE_API_URL || 'https://api.ybilgin.com'}</strong>
+                {t('debug.api')} <strong>{import.meta.env.VITE_API_URL || 'https://api.ybilgin.com'}</strong>
               </p>
               <p className="debug-log-text">
-                Letter: <strong>{data.apiResponse.letter}</strong>
+                {t('debug.letter')} <strong>{data.apiResponse.letter}</strong>
               </p>
               <p className="debug-log-text">
-                Confidence: <strong>{(data.apiResponse.confidence * 100).toFixed(1)}%</strong>
+                {t('debug.confidence')} <strong>{(data.apiResponse.confidence * 100).toFixed(1)}%</strong>
               </p>
               <p className="debug-log-text">
-                Round Trip: {roundTripTime.toFixed(0)}ms
+                {t('debug.round_trip')} {roundTripTime.toFixed(0)}ms
               </p>
               <p className="debug-log-text">
-                Server Processing: {data.apiResponse.processing_time_ms.toFixed(1)}ms
+                {t('debug.server_processing')} {data.apiResponse.processing_time_ms.toFixed(1)}ms
               </p>
               <p className="debug-log-text">
-                Model: {data.apiResponse.model_name}
+                {t('debug.model')} {data.apiResponse.model_name}
               </p>
             </div>
           )}
@@ -112,7 +114,7 @@ export default function DebugLog({ data }: DebugLogProps) {
           {/* Top Probabilities */}
           {sortedProbs.length > 0 && (
             <div className="debug-section">
-              <h4 className="debug-section-title probs">TOP 5 PREDICTIONS</h4>
+              <h4 className="debug-section-title probs">{t('debug.top5')}</h4>
               {sortedProbs.map(([letter, prob]) => (
                 <div key={letter} className="prob-row">
                   <span className="prob-letter">{letter}</span>
@@ -134,7 +136,7 @@ export default function DebugLog({ data }: DebugLogProps) {
           {/* Error */}
           {data.error && (
             <div className="debug-section">
-              <h4 className="debug-section-title error">ERROR</h4>
+              <h4 className="debug-section-title error">{t('debug.error')}</h4>
               <p className="debug-error-text">{data.error}</p>
             </div>
           )}

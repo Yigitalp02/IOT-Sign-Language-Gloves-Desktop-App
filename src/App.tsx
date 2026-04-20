@@ -854,9 +854,9 @@ function App() {
               pythonServerStatus === 'running' ? '#10b981' :
               pythonServerStatus === 'error'   ? '#ef4444' : '#fb923c'
             }}>
-              {pythonServerStatus === 'starting' && '⏳ Loading model… predictions paused until ready'}
-              {pythonServerStatus === 'running'  && '🟢 Model server ready · localhost:8765'}
-              {pythonServerStatus === 'error'    && '🔴 Server failed — toggle off/on to retry'}
+              {pythonServerStatus === 'starting' && t('dev.server_starting')}
+              {pythonServerStatus === 'running'  && t('dev.server_running')}
+              {pythonServerStatus === 'error'    && t('dev.server_error')}
             </span>
           )}
 
@@ -878,7 +878,7 @@ function App() {
           </label>
           {stableMode && (
             <span style={{ fontSize: '0.75rem', color: 'var(--accent-color)' }}>
-              Only shows predictions with confidence ≥ {Math.round(STABLE_CONFIDENCE_THRESHOLD * 100)}%
+              {t('dev.stable_hint', { threshold: Math.round(STABLE_CONFIDENCE_THRESHOLD * 100) })}
             </span>
           )}
         </div>
@@ -915,7 +915,7 @@ function App() {
               border:     `1px solid ${webglEnabled ? 'rgba(99,102,241,0.45)' : 'rgba(16,185,129,0.25)'}`,
               opacity:    (!webglEnabled && !webglDir) ? 0.45 : 1,
             }}>
-            🖼️ {webglEnabled ? 'Hide Twin (WebGL)' : 'Embed 3D Twin'}
+            🖼️ {webglEnabled ? t('twin.hide') : t('twin.show')}
           </button>
           {webglServerRunning && (
             <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
@@ -1172,7 +1172,7 @@ function App() {
                       lineHeight: 1.4,
                     }}
                   >
-                    {lockSpatial ? '📍 Position Locked' : '🔓 Lock Position'}
+                    {lockSpatial ? t('twin.position_locked') : t('twin.lock_position')}
                   </button>
                 </div>
               </div>

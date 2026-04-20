@@ -301,7 +301,7 @@ export default function ConnectionManager({ onSensorData, onImuData, onMotionDat
                                 border: isReading ? "1px solid #fb923c" : "1px solid #10b981"
                             }}
                         >
-                            {isReading ? "⏸ Pause" : "▶ Resume"}
+                            {isReading ? t("connection.serial_pause") : t("connection.serial_resume")}
                         </button>
                     )}
 
@@ -337,10 +337,10 @@ export default function ConnectionManager({ onSensorData, onImuData, onMotionDat
                         color: "var(--text-secondary)",
                         lineHeight: 1.5
                     }}>
-                        <strong style={{ color: "var(--text-primary)" }}>How to use WiFi:</strong><br />
-                        1. Set your router SSID/password in the sketch and flash the ESP32<br />
-                        2. The ESP32 joins your router — your laptop stays on the same network with internet<br />
-                        3. Connect below using <code style={{ background: "rgba(255,255,255,0.1)", padding: "0 4px", borderRadius: 3 }}>glove.local</code> (mDNS) or the IP shown in Serial Monitor
+                        <strong style={{ color: "var(--text-primary)" }}>{t("connection.wifi_how_to")}</strong><br />
+                        1. {t("connection.wifi_step1")}<br />
+                        2. {t("connection.wifi_step2")}<br />
+                        3. {t("connection.wifi_step3_pre")} <code style={{ background: "rgba(255,255,255,0.1)", padding: "0 4px", borderRadius: 3 }}>glove.local</code> {t("connection.wifi_step3_post")}
                     </div>
 
                     {/* Host / port inputs */}
@@ -395,7 +395,7 @@ export default function ConnectionManager({ onSensorData, onImuData, onMotionDat
                             opacity: isWifiConnecting ? 0.7 : 1
                         }}
                     >
-                        {isWifiConnecting ? "Connecting…" : isWifiConnected ? "Disconnect WiFi" : "Connect via WiFi"}
+                        {isWifiConnecting ? t("connection.wifi_connecting") : isWifiConnected ? t("connection.wifi_disconnect") : t("connection.wifi_connect")}
                     </button>
                 </div>
             )}

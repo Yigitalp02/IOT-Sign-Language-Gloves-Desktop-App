@@ -22,7 +22,17 @@
         "title": "Eldiven Bağlantısı",
         "connected": "Bağlı",
         "disconnected": "Bağlantı Yok",
-        "no_ports": "Cihaz bulunamadı"
+        "no_ports": "Cihaz bulunamadı",
+        "wifi_how_to": "WiFi nasıl kullanılır:",
+        "wifi_step1": "Taslakta yönlendirici SSID/şifresini ayarlayın ve ESP32'yi flashlayın",
+        "wifi_step2": "ESP32 yönlendiriciye bağlanır — dizüstü bilgisayarınız internete bağlı aynı ağda kalır",
+        "wifi_step3_pre": "Aşağıdan bağlanın:",
+        "wifi_step3_post": "(mDNS) veya Seri Monitördeki IP",
+        "wifi_connecting": "Bağlanıyor…",
+        "wifi_disconnect": "WiFi Bağlantısını Kes",
+        "wifi_connect": "WiFi ile Bağlan",
+        "serial_pause": "⏸ Duraklat",
+        "serial_resume": "▶ Devam Et"
     },
     "simulator": {
         "title": "ASL Simülatörü",
@@ -77,7 +87,11 @@
     },
     "dev": {
         "local_model": "Yerel model kullan (geliştirici)",
-        "stable_mode": "Kararlı mod"
+        "stable_mode": "Kararlı mod",
+        "server_starting": "⏳ Model yükleniyor… tahminler hazır olana kadar duraklatıldı",
+        "server_running": "🟢 Model sunucusu hazır · localhost:8765",
+        "server_error": "🔴 Sunucu başarısız — yeniden denemek için kapatıp açın",
+        "stable_hint": "Yalnızca güven ≥ {{threshold}}% olan tahminleri gösterir"
     },
     "log": {
         "title": "📊 Seri Veri Günlüğü (Son 100 örnek)",
@@ -91,7 +105,11 @@
         "subtitle": "WebGL · Canlı El Pozu",
         "reset": "↺ Sıfırla",
         "recalibrate": "⊕ Yeniden Kalibre Et",
-        "serving": "sunuluyor :8787"
+        "serving": "sunuluyor :8787",
+        "hide": "3D İkizi Gizle (WebGL)",
+        "show": "3D İkizi Göm",
+        "lock_position": "🔓 Konumu Kilitle",
+        "position_locked": "📍 Konum Kilitli"
     },
     "fingers": {
         "thumb": "Başparmak",
@@ -188,6 +206,23 @@
         "hint": "Gerçek zamanlı el pozunu görmek için simülatörü başlatın veya eldiveni bağlayın",
         "test_straight": "🖐️ Düz",
         "test_bent": "✊ Bükülü"
+    },
+    "debug": {
+        "title": "Hata Ayıklama Günlüğü",
+        "simulation": "SİMÜLASYON",
+        "duration": "Süre:",
+        "samples": "Örnek:",
+        "first": "İlk:",
+        "last": "Son:",
+        "api_response": "API YANITI",
+        "api": "API:",
+        "letter": "Harf:",
+        "confidence": "Güven:",
+        "round_trip": "Gidiş-Dönüş:",
+        "server_processing": "Sunucu İşleme:",
+        "model": "Model:",
+        "top5": "İLK 5 TAHMİN",
+        "error": "HATA"
     },
     "flex_graph": {
         "title": "Flex Geçmişi",
