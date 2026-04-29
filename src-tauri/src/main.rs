@@ -1159,13 +1159,14 @@ fn start_webgl_server(
 }
 
 /// Return the absolute path to the bundled WebGL build directory.
-/// In development this resolves relative to src-tauri/ (i.e. ../unity-handvis/WebGLBuild).
-/// In a bundled MSI it resolves to the installed resource location.
+/// Resolves via index.html (a concrete file) then takes its parent — this is
+/// more reliable than resolving a directory path directly in Tauri v1 production.
 #[tauri::command]
 fn get_webgl_dir(handle: tauri::AppHandle) -> Result<String, String> {
     handle
         .path_resolver()
-        .resolve_resource("../unity-handvis/WebGLBuild")
+        .resolve_resource("../webgl-build/index.html")
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .map(|p| p.to_string_lossy().to_string())
         .ok_or_else(|| "WebGL build directory not found in app resources".to_string())
 }

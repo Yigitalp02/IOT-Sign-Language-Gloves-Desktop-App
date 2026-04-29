@@ -83,9 +83,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Add TAURI_PRIVATE_KEY (contents of the .key file) to
-          # Settings → Secrets and variables → Actions in your GitHub repo.
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          # Vite embeds these at build time so the shipped app can reach the cloud API.
+          # Add VITE_API_URL and VITE_API_KEY to Settings → Secrets → Actions.
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_API_KEY: ${{ secrets.VITE_API_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'IoT Sign Language v__VERSION__'
