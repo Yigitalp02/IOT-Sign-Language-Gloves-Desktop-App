@@ -14,9 +14,6 @@ export default function UpdaterModal() {
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    // Only check in production (skip in tauri dev where pubkey is placeholder)
-    if (!window.__TAURI__) return;
-
     const run = async () => {
       try {
         const result = await checkUpdate();
