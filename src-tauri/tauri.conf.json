@@ -18,9 +18,17 @@
         "open": true
       }
     },
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNBMTNFNzU4MTE3QkU5MkEKUldRcTZYc1JXT2NUT2o2Y05GUjhVMEFtSWs5cWl2S3hEK0VHOHdTQjhsK3Q0a0xuSGgzTWZwLysK",
+      "endpoints": [
+        "https://github.com/Yigitalp02/IOT-Sign-Language-Gloves-Desktop-App/releases/latest/download/latest.json"
+      ]
+    },
     "bundle": {
       "active": true,
-      "targets": "all",
+      "targets": ["nsis", "msi"],
       "identifier": "com.iot.signlanguage",
       "resources": [
         "../unity-handvis/WebGLBuild/**/*",

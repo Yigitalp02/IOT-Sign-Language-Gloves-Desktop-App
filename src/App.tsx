@@ -11,6 +11,7 @@ import HandVisualization3D from "./components/HandVisualization3D";
 import DebugLog from "./components/DebugLog";
 import DataRecorder from "./components/DataRecorder";
 import apiService, { PredictionResponse } from "./services/apiService";
+import UpdaterModal from "./components/UpdaterModal";
 import "./App.css";
 
 // Default sensor calibration values for thermistors (physical glove)
@@ -274,7 +275,9 @@ function App() {
       try {
         const alive = await invoke<boolean>('python_server_status');
         if (!alive) {
+          const output = await invoke<string>('python_server_output').catch(() => '');
           console.warn('[App] Python server process exited unexpectedly');
+          console.error('[App] Python server last output:\n', output.slice(-3000));
           pythonServerReadyRef.current = false;
           setPythonServerStatus('error');
         }
@@ -781,6 +784,7 @@ function App() {
 
   return (
     <div className="container">
+      <UpdaterModal />
       <div className="header">
         <h1>{t("app.title")}</h1>
         <p className="subtitle">{t("app.subtitle")}</p>

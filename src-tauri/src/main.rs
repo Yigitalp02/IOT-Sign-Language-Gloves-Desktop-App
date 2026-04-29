@@ -885,14 +885,45 @@ fn start_python_server(
 ) -> Result<String, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
 
-    // Kill any previously running instance and wait briefly so the OS can
-    // release the TCP port from TIME_WAIT before the new process tries to bind.
+    // If a child process is already alive, return early — don't restart.
+    // This prevents React StrictMode's double-invoke from killing and
+    // re-spawning a healthy server process.
+    if let Some(child) = s.child.as_mut() {
+        if matches!(child.try_wait(), Ok(None)) {
+            println!("[python_server] Already running, skipping restart");
+            return Ok("already running".to_string());
+        }
+    }
+
+    // Kill any previously running instance tracked by this process.
     if let Some(mut child) = s.child.take() {
         let _ = child.kill();
         let _ = child.wait();
-        // Give Windows ~2 s to recycle the socket; the Python script will also
-        // retry binding for up to 30 s, so this is belt-and-suspenders.
-        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    // On Windows, also force-kill any leftover model-server exe from a previous
+    // session (e.g. if the app was closed without a clean shutdown).
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", "serve_local_model_one.exe"])
+            .output();
+    }
+
+    // Actively poll until port 8765 can be bound (up to 15 s).
+    let port_free = {
+        let mut free = false;
+        for _ in 0..30 {
+            if std::net::TcpListener::bind("127.0.0.1:8765").is_ok() {
+                free = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+        free
+    };
+    if !port_free {
+        println!("[python_server] Warning: port 8765 did not free up within 15 s, starting anyway");
     }
     // Clear old output
     if let Ok(mut b) = s.output_buf.lock() { b.clear(); }
@@ -1411,6 +1442,10 @@ fn main() {
     let wifi_state: WifiStateShared = Arc::new(Mutex::new(None));
     let python_server: PythonServerShared = Arc::new(Mutex::new(PythonServerState::new()));
 
+    // Clone for use in the window-close handler so the Python server is always
+    // killed when the user closes the app (prevents port 8765 lingering across restarts).
+    let python_server_cleanup = python_server.clone();
+
     tauri::Builder::default()
         .manage(serial_state)
         .manage(reading_active)
@@ -1418,6 +1453,17 @@ fn main() {
         .manage(webgl_server)
         .manage(wifi_state)
         .manage(python_server)
+        .on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = event.event() {
+                if let Ok(mut s) = python_server_cleanup.lock() {
+                    if let Some(mut child) = s.child.take() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        println!("[python_server] Killed on window close");
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             tts_say,
             list_ports,
