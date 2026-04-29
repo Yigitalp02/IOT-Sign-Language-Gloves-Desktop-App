@@ -31,7 +31,7 @@
       "targets": ["nsis", "msi"],
       "identifier": "com.iot.signlanguage",
       "resources": [
-        "../unity-handvis/WebGLBuild/**/*",
+        "../webgl-build/**/*",
         "resources/model-server/**/*"
       ],
       "icon": [

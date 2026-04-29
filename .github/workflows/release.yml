@@ -56,6 +56,17 @@ jobs:
             Write-Host "No requirements.txt found — skipping model server build."
           }
 
+      # ── Resource placeholders ─────────────────────────────────────────────
+      # webgl-build/ is tracked in git so it's always present.
+      # The model-server exe is built locally and gitignored; create a placeholder
+      # so Tauri's bundler doesn't error on the glob. The app falls back to the
+      # cloud API when no local model server is bundled.
+      - name: Create model-server placeholder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "src-tauri\resources\model-server"
+          New-Item -ItemType File      -Force -Path "src-tauri\resources\model-server\.keep" | Out-Null
+
       # ── Rust ──────────────────────────────────────────────────────────────
       - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@stable
