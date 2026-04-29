@@ -1,6 +1,6 @@
 [package]
 name = "iot-sign-language-desktop"
-version = "1.0.1"
+version = "1.0.2"
 description = "IoT Sign Language Desktop Application with TTS"
 authors = ["Yigitalp02"]
 license = "MIT"
@@ -23,6 +23,7 @@ tiny_http = "0.12"
 winapi = { version = "0.3", features = [
     "namedpipeapi", "fileapi", "handleapi",
     "winbase", "winerror", "minwindef",
+    "errhandlingapi",
 ] }
 
 [features]
