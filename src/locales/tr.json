@@ -3,7 +3,7 @@
         "title": "IoT İşaret Dili",
         "subtitle": "ASL Tanıma Sistemi",
         "footer": "Makine öğrenimi ve sensör eldiven teknolojisi ile gerçek zamanlı Amerikan İşaret Dili tanıma.",
-        "version": "Sürüm 1.0.0 | Bilgisayar Mühendisliği Bitirme Projesi | Yiğit Alp Bilgin",
+        "version": "v{{version}} | Bilgisayar Mühendisliği Bitirme Projesi | Yiğit Alp Bilgin",
         "asl_recognition": "ASL Tanıma"
     },
     "input": {

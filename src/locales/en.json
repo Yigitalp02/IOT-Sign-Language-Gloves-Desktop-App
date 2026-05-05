@@ -3,7 +3,7 @@
         "title": "IoT Sign Language",
         "subtitle": "ASL Recognition System",
         "footer": "Real-time American Sign Language recognition using ML and sensor glove technology.",
-        "version": "Version 1.0.0 | Computer Science Graduation Project | Yiğit Alp Bilgin",
+        "version": "v{{version}} | Computer Science Graduation Project | Yiğit Alp Bilgin",
         "asl_recognition": "ASL Recognition"
     },
     "input": {

@@ -3,7 +3,7 @@
         "title": "IoT Gebärdensprache",
         "subtitle": "ASL-Erkennungssystem",
         "footer": "Echtzeit-Erkennung der amerikanischen Gebärdensprache mit ML und Sensor-Handschuh-Technologie.",
-        "version": "Version 1.0.0 | Informatik-Abschlussprojekt | Yiğit Alp Bilgin",
+        "version": "v{{version}} | Informatik-Abschlussprojekt | Yiğit Alp Bilgin",
         "asl_recognition": "ASL-Erkennung"
     },
     "input": {

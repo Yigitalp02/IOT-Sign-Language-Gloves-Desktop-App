@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
+import { getVersion } from "@tauri-apps/api/app";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "./context/ThemeContext";
 import ConnectionManager, { ImuData, MotionData } from "./components/ConnectionManager";
@@ -51,7 +52,12 @@ interface DebugLogData {
 function App() {
   const { t, i18n } = useTranslation();
   const { theme, setTheme } = useTheme();
-  
+  const [appVersion, setAppVersion] = useState("…");
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
+
   // Prediction state
   const [sensorBuffer, setSensorBuffer] = useState<number[][]>([]);
   const isCollectingRef = useRef(true);
@@ -1407,7 +1413,7 @@ function App() {
 
       <div className="footer">
         <p className="info-text">{t("app.footer")}</p>
-        <p className="version">{t("app.version")}</p>
+        <p className="version">{t("app.version", { version: appVersion })}</p>
       </div>
     </div>
   );
