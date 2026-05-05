@@ -1,6 +1,6 @@
 [package]
 name = "iot-sign-language-desktop"
-version = "1.0.4"
+version = "1.0.5"
 description = "IoT Sign Language Desktop Application with TTS"
 authors = ["Yigitalp02"]
 license = "MIT"
