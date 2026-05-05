@@ -103,7 +103,8 @@ jobs:
             - IoT ASL sensor glove hardware
           releaseDraft: false
           prerelease: false
-          # Build both MSI and NSIS:
-          #   • MSI  → used by the auto-updater (latest.json points here by default)
-          #   • NSIS → listed in the release as an alternative .exe download
-          args: --bundles msi,nsis
+          # Build MSI + NSIS + updater:
+          #   • updater → generates the signed .zip.sig files and latest.json
+          #   • MSI     → primary installer (used by the auto-updater)
+          #   • NSIS    → alternative .exe download
+          args: --bundles updater,msi,nsis
