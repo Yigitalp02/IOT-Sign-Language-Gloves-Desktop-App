@@ -224,6 +224,27 @@
         "top5": "TOP 5 PREDICTIONS",
         "error": "ERROR"
     },
+    "armband_cal": {
+        "title": "Armband IMU Calibration",
+        "subtitle": "Capture 3 reference poses to define the neutral arm orientation",
+        "reset": "Reset All",
+        "no_armbands": "⚠️ Armbands not detected — power on both armbands first",
+        "step_n": "Step {{n}}",
+        "step1_title": "Arm Down (Neutral)",
+        "step1_desc": "Let your arm hang naturally at your side, elbow slightly bent",
+        "step2_title": "Arm Forward",
+        "step2_desc": "Extend your arm straight forward, parallel to the ground",
+        "step3_title": "T-Pose",
+        "step3_desc": "Extend your arm out to the side, parallel to the ground",
+        "set_pose": "Set Pose",
+        "capture": "⊕ Capture Now",
+        "cancel": "Cancel",
+        "redo": "Re-do",
+        "hold_still": "hold your arm steady and click Capture",
+        "all_done": "✓ All 3 poses captured — ready to apply",
+        "partial_done": "{{count}}/3 poses captured",
+        "apply": "Apply Armband Calibration"
+    },
     "flex_graph": {
         "title": "Flex History",
         "norm": "Norm",

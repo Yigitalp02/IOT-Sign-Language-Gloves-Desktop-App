@@ -224,6 +224,27 @@
         "top5": "İLK 5 TAHMİN",
         "error": "HATA"
     },
+    "armband_cal": {
+        "title": "Kol Bandı IMU Kalibrasyonu",
+        "subtitle": "Nötr kol yönelimini tanımlamak için 3 referans poz kaydedin",
+        "reset": "Tümünü Sıfırla",
+        "no_armbands": "⚠️ Kol bandı algılanamadı — önce her iki kol bandını da açın",
+        "step_n": "Adım {{n}}",
+        "step1_title": "Kol Aşağıda (Nötr)",
+        "step1_desc": "Kolunuzu doğal şekilde yanınıza sarkıtın, dirsek hafifçe bükülü",
+        "step2_title": "Kol Öne",
+        "step2_desc": "Kolunuzu zemine paralel, düz öne doğru uzatın",
+        "step3_title": "T-Pozu",
+        "step3_desc": "Kolunuzu yana doğru zemine paralel uzatın",
+        "set_pose": "Poz Ayarla",
+        "capture": "⊕ Şimdi Kaydet",
+        "cancel": "İptal",
+        "redo": "Yeniden Yap",
+        "hold_still": "kolunuzu sabit tutun ve Kaydet'e tıklayın",
+        "all_done": "✓ 3 poz kaydedildi — uygulamaya hazır",
+        "partial_done": "{{count}}/3 poz kaydedildi",
+        "apply": "Kol Bandı Kalibrasyonunu Uygula"
+    },
     "flex_graph": {
         "title": "Flex Geçmişi",
         "norm": "Norm",

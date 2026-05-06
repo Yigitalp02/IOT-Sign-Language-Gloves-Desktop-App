@@ -15,17 +15,23 @@ export interface MotionData {
     gx: number; gy: number; gz: number; // angular velocity    [deg/s]
 }
 
+export interface ArmImuData {
+    q1: ImuData; // upper arm (triceps) armband  — id=1
+    q2: ImuData; // forearm armband              — id=2
+}
+
 interface ConnectionManagerProps {
     onSensorData?: (data: number[]) => void;
     onImuData?: (data: ImuData) => void;
     onMotionData?: (data: MotionData) => void;
+    onArmImuData?: (data: ArmImuData) => void;
     onConnectionChange?: (connected: boolean) => void;
 }
 
 const WIFI_HOST_DEFAULT = "glove.local";
 const WIFI_PORT_DEFAULT = 3333;
 
-export default function ConnectionManager({ onSensorData, onImuData, onMotionData, onConnectionChange }: ConnectionManagerProps): React.JSX.Element {
+export default function ConnectionManager({ onSensorData, onImuData, onMotionData, onArmImuData, onConnectionChange }: ConnectionManagerProps): React.JSX.Element {
     const { t } = useTranslation();
     const [ports, setPorts] = useState<string[]>([]);
     const [selectedPort, setSelectedPort] = useState<string>("");
@@ -43,9 +49,11 @@ export default function ConnectionManager({ onSensorData, onImuData, onMotionDat
     const onSensorDataRef = useRef(onSensorData);
     const onImuDataRef = useRef(onImuData);
     const onMotionDataRef = useRef(onMotionData);
+    const onArmImuDataRef = useRef(onArmImuData);
     useEffect(() => { onSensorDataRef.current = onSensorData; }, [onSensorData]);
     useEffect(() => { onImuDataRef.current = onImuData; }, [onImuData]);
     useEffect(() => { onMotionDataRef.current = onMotionData; }, [onMotionData]);
+    useEffect(() => { onArmImuDataRef.current = onArmImuData; }, [onArmImuData]);
 
     const scanPorts = async () => {
         setIsScanning(true);
@@ -87,11 +95,19 @@ export default function ConnectionManager({ onSensorData, onImuData, onMotionDat
                 onMotionDataRef.current(event.payload);
             }
         });
+
+        // Listen for armband IMU events (Q1 upper arm + Q2 forearm, emitted when 23-col format)
+        const unlistenArmImu = listen<ArmImuData>("serial-arm-imu", (event) => {
+            if (onArmImuDataRef.current) {
+                onArmImuDataRef.current(event.payload);
+            }
+        });
         
         return () => {
             unlistenSensor.then(f => f());
             unlistenImu.then(f => f());
             unlistenMotion.then(f => f());
+            unlistenArmImu.then(f => f());
         };
     }, []); // Empty deps - only register once
 

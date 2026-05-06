@@ -224,6 +224,27 @@
         "top5": "TOP 5 VORHERSAGEN",
         "error": "FEHLER"
     },
+    "armband_cal": {
+        "title": "Armband-IMU-Kalibrierung",
+        "subtitle": "Erfassen Sie 3 Referenzposen zur Festlegung der neutralen Armausrichtung",
+        "reset": "Alle zurücksetzen",
+        "no_armbands": "⚠️ Armbänder nicht erkannt — schalten Sie zuerst beide Armbänder ein",
+        "step_n": "Schritt {{n}}",
+        "step1_title": "Arm unten (Neutral)",
+        "step1_desc": "Lassen Sie Ihren Arm natürlich hängen, Ellbogen leicht gebeugt",
+        "step2_title": "Arm nach vorne",
+        "step2_desc": "Strecken Sie Ihren Arm gerade nach vorne, parallel zum Boden",
+        "step3_title": "T-Pose",
+        "step3_desc": "Strecken Sie Ihren Arm seitlich aus, parallel zum Boden",
+        "set_pose": "Pose einstellen",
+        "capture": "⊕ Jetzt erfassen",
+        "cancel": "Abbrechen",
+        "redo": "Wiederholen",
+        "hold_still": "halten Sie Ihren Arm ruhig und klicken Sie auf Erfassen",
+        "all_done": "✓ Alle 3 Posen erfasst — bereit zum Anwenden",
+        "partial_done": "{{count}}/3 Posen erfasst",
+        "apply": "Armband-Kalibrierung anwenden"
+    },
     "flex_graph": {
         "title": "Flex-Verlauf",
         "norm": "Norm",

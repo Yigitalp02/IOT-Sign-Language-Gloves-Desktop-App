@@ -16,15 +16,17 @@ export default function UpdaterModal() {
   useEffect(() => {
     const run = async () => {
       try {
+        console.log('[Updater] Checking for updates…');
         const result = await checkUpdate();
+        console.log('[Updater] Result:', result);
         if (result.shouldUpdate && result.manifest) {
           setUpdate({
             version: result.manifest.version,
             body: result.manifest.body,
           });
         }
-      } catch {
-        // Silently ignore — updater unavailable in dev or no network
+      } catch (e) {
+        console.warn('[Updater] Check failed:', e);
       }
     };
 

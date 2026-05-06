@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/tauri";
 import { getVersion } from "@tauri-apps/api/app";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "./context/ThemeContext";
-import ConnectionManager, { ImuData, MotionData } from "./components/ConnectionManager";
+import ConnectionManager, { ImuData, MotionData, ArmImuData } from "./components/ConnectionManager";
 import Calibrator from "./components/Calibrator";
 import PredictionView from "./components/PredictionView";
 import SensorDisplay from "./components/SensorDisplay";
@@ -13,6 +13,7 @@ import DebugLog from "./components/DebugLog";
 import DataRecorder from "./components/DataRecorder";
 import apiService, { PredictionResponse } from "./services/apiService";
 import UpdaterModal from "./components/UpdaterModal";
+import ArmbandCalibrator, { ArmbandCalibration } from "./components/ArmbandCalibrator";
 import "./App.css";
 
 // Default sensor calibration values for thermistors (physical glove)
@@ -82,6 +83,14 @@ function App() {
   const currentMotionRef = useRef<MotionData | null>(null);
   const handleMotionData = useCallback((data: MotionData) => {
     currentMotionRef.current = data;
+  }, []);
+
+  // Arm IMU data: Q1 (upper arm) + Q2 (forearm) from armbands via ESP-NOW (23-col firmware)
+  const [currentArmImu, setCurrentArmImu] = useState<ArmImuData | null>(null);
+  const currentArmImuRef = useRef<ArmImuData | null>(null);
+  const handleArmImuData = useCallback((data: ArmImuData) => {
+    currentArmImuRef.current = data;
+    setCurrentArmImu(data);
   }, []);
 
   // EMA (Exponential Moving Average) buffer for smoothing data sent to Unity/WebGL
@@ -155,6 +164,16 @@ function App() {
   
   // Connection state (for future glove support)
   const [connectedDevice, setConnectedDevice] = useState<string | null>(null);
+
+  // Armband calibration state (3-pose reference capture)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_armbandCal, setArmbandCal] = useState<ArmbandCalibration>(() => {
+    try {
+      const raw = localStorage.getItem('armband_calibration');
+      if (raw) return JSON.parse(raw) as ArmbandCalibration;
+    } catch {}
+    return { neutral: null, forward: null, tpose: null };
+  });
 
   // Calibration state
   const [baselines, setBaselines] = useState<number[]>(() => {
@@ -617,9 +636,11 @@ function App() {
     // Add to data log (keep last 100 samples) — show all parsed columns
     const imu    = currentImuRef.current;
     const motion = currentMotionRef.current;
+    const arm    = currentArmImuRef.current;
     let logLine = data.join(',');
-    if (imu)    logLine += ` | qw:${imu.w.toFixed(4)} qx:${imu.x.toFixed(4)} qy:${imu.y.toFixed(4)} qz:${imu.z.toFixed(4)}`;
-    if (motion) logLine += ` | lx:${motion.lx.toFixed(3)} ly:${motion.ly.toFixed(3)} lz:${motion.lz.toFixed(3)} gx:${motion.gx.toFixed(2)} gy:${motion.gy.toFixed(2)} gz:${motion.gz.toFixed(2)}`;
+    if (imu)    logLine += ` | Q0 w:${imu.w.toFixed(3)} x:${imu.x.toFixed(3)} y:${imu.y.toFixed(3)} z:${imu.z.toFixed(3)}`;
+    if (motion) logLine += ` | la:${motion.lx.toFixed(2)},${motion.ly.toFixed(2)},${motion.lz.toFixed(2)} gy:${motion.gx.toFixed(1)},${motion.gy.toFixed(1)},${motion.gz.toFixed(1)}`;
+    if (arm)    logLine += ` | Q1 w:${arm.q1.w.toFixed(3)} x:${arm.q1.x.toFixed(3)} y:${arm.q1.y.toFixed(3)} z:${arm.q1.z.toFixed(3)} | Q2 w:${arm.q2.w.toFixed(3)} x:${arm.q2.x.toFixed(3)} y:${arm.q2.y.toFixed(3)} z:${arm.q2.z.toFixed(3)}`;
     dataLogRef.current = [...dataLogRef.current, logLine].slice(-100);
     setDataLog(dataLogRef.current);
 
@@ -939,6 +960,7 @@ function App() {
           onSensorData={handleSensorData}
           onImuData={handleImuData}
           onMotionData={handleMotionData}
+          onArmImuData={handleArmImuData}
           onConnectionChange={(connected) => {
             setConnectedDevice(connected ? 'serial-device' : null);
             
@@ -949,6 +971,8 @@ function App() {
               setCurrentSample(null);
               setCurrentImu(null);
               currentImuRef.current = null;
+              setCurrentArmImu(null);
+              currentArmImuRef.current = null;
               setDataLog([]);
               dataLogRef.current = [];
               realTimeBufferRef.current = []; // Clear real-time buffer
@@ -967,6 +991,15 @@ function App() {
           currentSample={currentSample}
           currentBaselines={baselines}
           currentMaxbends={maxbends}
+        />
+
+        {/* Armband IMU Calibrator — 3-pose reference capture */}
+        <ArmbandCalibrator
+          currentArmImu={currentArmImu}
+          onCalibrationComplete={(cal) => {
+            setArmbandCal(cal);
+            console.log('[App] Armband calibration applied:', cal);
+          }}
         />
 
         {/* Recognition Mode Selector */}

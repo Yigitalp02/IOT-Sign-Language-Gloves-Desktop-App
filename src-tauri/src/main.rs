@@ -597,12 +597,51 @@ fn start_reading_serial(
                             }
                             
                             // Parse CSV formats:
-                            //   5  cols: "flex×5"                          (legacy)
-                            //   9  cols: "flex×5, qw,qx,qy,qz"            (v3)
-                            //   15 cols: "flex×5, qw,qx,qy,qz, lx,ly,lz, gx,gy,gz" (v4 motion)
+                            //   5  cols: "flex×5"                                              (legacy)
+                            //   9  cols: "flex×5, qw,qx,qy,qz"                               (v3)
+                            //   15 cols: "flex×5, qw,qx,qy,qz, lx,ly,lz, gx,gy,gz"          (v4)
+                            //   23 cols: "flex×5, qw,qx,qy,qz, lx,ly,lz, gx,gy,gz, q1×4, q2×4" (v5 armband)
                             let values: Vec<&str> = line.split(',').collect();
 
-                            if values.len() == 15 {
+                            if values.len() == 23 {
+                                // v5 armband format: all 15 cols + Q1 (upper arm) + Q2 (forearm)
+                                let raw_flex: Vec<i64> = values[..5]
+                                    .iter()
+                                    .filter_map(|s| s.trim().parse::<i64>().ok())
+                                    .collect();
+                                let floats: Vec<f32> = values[5..15]
+                                    .iter()
+                                    .filter_map(|s| s.trim().parse::<f32>().ok())
+                                    .collect();
+                                let arm_floats: Vec<f32> = values[15..]
+                                    .iter()
+                                    .filter_map(|s| s.trim().parse::<f32>().ok())
+                                    .collect();
+                                if raw_flex.len() == 5 && floats.len() == 10 && arm_floats.len() == 8 {
+                                    let thermistors: Vec<i32> = raw_flex.iter().enumerate().map(|(i, &v)| {
+                                        let accepted = if prev_flex[i] < 0 || (v - prev_flex[i]).abs() <= SPIKE_THRESHOLD {
+                                            v
+                                        } else {
+                                            prev_flex[i]
+                                        };
+                                        prev_flex[i] = accepted;
+                                        accepted as i32
+                                    }).collect();
+                                    let _ = window.emit("serial-data", &thermistors);
+                                    let _ = window.emit("serial-imu", serde_json::json!({
+                                        "w": floats[0], "x": floats[1],
+                                        "y": floats[2], "z": floats[3]
+                                    }));
+                                    let _ = window.emit("serial-motion", serde_json::json!({
+                                        "lx": floats[4], "ly": floats[5], "lz": floats[6],
+                                        "gx": floats[7], "gy": floats[8], "gz": floats[9]
+                                    }));
+                                    let _ = window.emit("serial-arm-imu", serde_json::json!({
+                                        "q1": { "w": arm_floats[0], "x": arm_floats[1], "y": arm_floats[2], "z": arm_floats[3] },
+                                        "q2": { "w": arm_floats[4], "x": arm_floats[5], "y": arm_floats[6], "z": arm_floats[7] }
+                                    }));
+                                }
+                            } else if values.len() == 15 {
                                 let raw_flex: Vec<i64> = values[..5]
                                     .iter()
                                     .filter_map(|s| s.trim().parse::<i64>().ok())
@@ -1376,7 +1415,30 @@ fn connect_wifi(
 
                     // Same parsing as the serial thread so the same React callbacks fire
                     let values: Vec<&str> = trimmed.split(',').collect();
-                    if values.len() == 15 {
+                    if values.len() == 23 {
+                        // v5 armband format: all 15 cols + Q1 (upper arm) + Q2 (forearm)
+                        let thermistors: Vec<i32> = values[..5]
+                            .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
+                        let floats: Vec<f32> = values[5..15]
+                            .iter().filter_map(|s| s.trim().parse::<f32>().ok()).collect();
+                        let arm_floats: Vec<f32> = values[15..]
+                            .iter().filter_map(|s| s.trim().parse::<f32>().ok()).collect();
+                        if thermistors.len() == 5 && floats.len() == 10 && arm_floats.len() == 8 {
+                            let _ = window.emit("serial-data", &thermistors);
+                            let _ = window.emit("serial-imu", serde_json::json!({
+                                "w": floats[0], "x": floats[1],
+                                "y": floats[2], "z": floats[3]
+                            }));
+                            let _ = window.emit("serial-motion", serde_json::json!({
+                                "lx": floats[4], "ly": floats[5], "lz": floats[6],
+                                "gx": floats[7], "gy": floats[8], "gz": floats[9]
+                            }));
+                            let _ = window.emit("serial-arm-imu", serde_json::json!({
+                                "q1": { "w": arm_floats[0], "x": arm_floats[1], "y": arm_floats[2], "z": arm_floats[3] },
+                                "q2": { "w": arm_floats[4], "x": arm_floats[5], "y": arm_floats[6], "z": arm_floats[7] }
+                            }));
+                        }
+                    } else if values.len() == 15 {
                         let thermistors: Vec<i32> = values[..5]
                             .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
                         let floats: Vec<f32> = values[5..]
