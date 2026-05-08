@@ -24,13 +24,85 @@ const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position
 // ── Quaternion helpers (mirrors HandVisualization3D math) ─────────────────────
 // Used to apply the same IMU transformation chain before forwarding to Unity.
 type Quat = { w: number; x: number; y: number; z: number };
+type Vec3 = { x: number; y: number; z: number };
 const qMult = (a: Quat, b: Quat): Quat => ({
   w: a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
   x: a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
   y: a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
   z: a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
 });
-const qInv  = (q: Quat): Quat => ({ w: q.w, x: -q.x, y: -q.y, z: -q.z });
+const qInv     = (q: Quat): Quat => ({ w: q.w, x: -q.x, y: -q.y, z: -q.z });
+const rotateVec = (q: Quat, v: Vec3): Vec3 => {
+  const r = qMult(qMult(q, { w: 0, x: v.x, y: v.y, z: v.z }), qInv(q));
+  return { x: r.x, y: r.y, z: r.z };
+};
+// Remap a BNO055 absolute quaternion (ENU: X=East, Y=North, Z=Up) to Unity world space.
+// Axis convention: Unity X ← BNO X (East→Right), Unity Y ← BNO Z (Up→Up), Unity Z ← -BNO Y (North→-Forward, handles LH flip)
+const remapBnoToUnity = (q: Quat): Quat => ({ w: q.w, x: q.x, y: q.z, z: -q.y });
+
+// ── Arm FK constants ─────────────────────────────────────────────────────────
+// Bone lengths in Unity world-space metres (1 unit ≈ 1 m in this scene).
+const UPPER_ARM_LEN = 0.355; // shoulder → elbow
+const FOREARM_LEN   = 0.280; // elbow    → wrist
+// Wrist Y-offset when arm hangs straight down at neutral.
+const NEUTRAL_ARM_Y = -(UPPER_ARM_LEN + FOREARM_LEN);
+
+// Compute wrist DELTA from the neutral (arm-hanging-down) position.
+// Returns (0,0,0) when the arm is at the calibrated neutral pose so the hand
+// stays exactly where it starts in the Unity scene — no absolute coordinates needed.
+//
+// forward1 (optional): Q1 captured during the "arm straight forward" calibration step.
+// When provided, a heading correction is applied so that:
+//   • arm-right  → delta.x positive  (scene X, same as hand model's right)
+//   • arm-forward → delta.z positive  (scene Z, same as hand model's forward)
+//   • arm-up     → delta.y positive  (scene Y)
+// Without it the FK axes depend on which compass direction the user faces.
+const computeArmFK = (
+  q1: Quat, q2: Quat,
+  neutral1: Quat, neutral2: Quat,
+  forward1?: Quat,
+): Vec3 => {
+  const q1u = remapBnoToUnity(q1);
+  const q2u = remapBnoToUnity(q2);
+  const n1u = remapBnoToUnity(neutral1);
+  const n2u = remapBnoToUnity(neutral2);
+  // Relative rotation from neutral: q_rel = q_current * qInv(q_neutral)
+  const q1Rel = qMult(q1u, qInv(n1u));
+  const q2Rel = qMult(q2u, qInv(n2u));
+  // At neutral the arm hangs down → (0, -1, 0) in Unity
+  const upperArmVec = rotateVec(q1Rel, { x: 0, y: -UPPER_ARM_LEN, z: 0 });
+  const forearmVec  = rotateVec(q2Rel, { x: 0, y: -FOREARM_LEN,   z: 0 });
+
+  // ── Heading correction ────────────────────────────────────────────────────
+  // The "forward" calibration pose tells us which compass direction is body-forward.
+  // We build a Y-axis rotation that aligns body-forward with scene +Z so that
+  // arm-forward always moves the hand forward in the scene, regardless of which
+  // direction the user faces.
+  let qHeadingCorr: Quat = { w: 1, x: 0, y: 0, z: 0 };
+  if (forward1) {
+    const f1u   = remapBnoToUnity(forward1);
+    // Arm direction when pointing straight forward, relative to neutral
+    const fwdDir = rotateVec(qMult(f1u, qInv(n1u)), { x: 0, y: -1, z: 0 });
+    const fwdMag = Math.sqrt(fwdDir.x * fwdDir.x + fwdDir.z * fwdDir.z);
+    if (fwdMag > 0.1) {
+      // Signed angle from scene +Z to the body-forward direction (XZ plane)
+      const angle = Math.atan2(fwdDir.x, fwdDir.z);
+      // Rotate by −angle about Y to align body-forward → scene +Z
+      const s = Math.sin(-angle / 2);
+      const c = Math.cos(-angle / 2);
+      qHeadingCorr = { w: c, x: 0, y: s, z: 0 };
+    }
+  }
+
+  const uAV = rotateVec(qHeadingCorr, upperArmVec);
+  const fAV  = rotateVec(qHeadingCorr, forearmVec);
+
+  return {
+    x:  uAV.x + fAV.x,
+    y: (uAV.y + fAV.y) - NEUTRAL_ARM_Y,  // 0 at neutral
+    z:  uAV.z + fAV.z,                    // 0 at neutral, +z = body-forward
+  };
+};
 // Fallback calibration used when the user has never run the calibrator.
 // These match SimulatorControl and have a proper wide range per finger.
 const SIMULATOR_BASELINES = [1560, 7070, 6130, 6560, 5880];
@@ -166,14 +238,15 @@ function App() {
   const [connectedDevice, setConnectedDevice] = useState<string | null>(null);
 
   // Armband calibration state (3-pose reference capture)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_armbandCal, setArmbandCal] = useState<ArmbandCalibration>(() => {
+  const [armbandCal, setArmbandCal] = useState<ArmbandCalibration>(() => {
     try {
       const raw = localStorage.getItem('armband_calibration');
       if (raw) return JSON.parse(raw) as ArmbandCalibration;
     } catch {}
     return { neutral: null, forward: null, tpose: null };
   });
+  const armbandCalRef = useRef(armbandCal);
+  useEffect(() => { armbandCalRef.current = armbandCal; }, [armbandCal]);
 
   // Calibration state
   const [baselines, setBaselines] = useState<number[]>(() => {
@@ -617,6 +690,11 @@ function App() {
 
       if (webglEnabledRef.current && webglIframeRef.current?.contentWindow) {
         const motion = lockSpatialRef.current ? null : currentMotionRef.current;
+        const arm = currentArmImuRef.current;
+        const cal = armbandCalRef.current;
+        const handPosition = (arm && cal.neutral)
+          ? computeArmFK(arm.q1, arm.q2, cal.neutral.q1, cal.neutral.q2, cal.forward?.q1 ?? undefined)
+          : null;
         webglIframeRef.current.contentWindow.postMessage(
           {
             type: 'sensorData',
@@ -627,6 +705,9 @@ function App() {
               : null,
             motion: motion ? { lx: motion.lx, ly: motion.ly, lz: motion.lz } : null,
             gyro:   motion ? { gx: motion.gx, gy: motion.gy, gz: motion.gz } : null,
+            q1: arm ? { w: arm.q1.w, x: arm.q1.x, y: arm.q1.y, z: arm.q1.z } : null,
+            q2: arm ? { w: arm.q2.w, x: arm.q2.x, y: arm.q2.y, z: arm.q2.z } : null,
+            handPosition: handPosition ? { x: handPosition.x * 3, y: handPosition.y * 3, z: -handPosition.z * 3 } : null,
           },
           '*'
         );

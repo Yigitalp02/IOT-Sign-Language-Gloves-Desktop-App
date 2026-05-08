@@ -16,7 +16,7 @@ uint8_t broadcastAddress[] = {0xD8, 0x3B, 0xDA, 0x11, 0x79, 0x70};
 #define I2C_SDA 8  
 #define I2C_SCL 9  
 
-uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
+uint16_t BNO055_SAMPLERATE_DELAY_MS = 20; // 50 Hz — matches the glove's output rate
 
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x29, &Wire);
 
@@ -105,7 +105,7 @@ void setup(void) {
   }
 
   // IMPORTANT: Set to 1 for the first S3 (Triceps), and 2 for the second S3 (Forearm)
-  myData.id = 1; 
+  myData.id = 2; 
 }
 
 void loop(void) {

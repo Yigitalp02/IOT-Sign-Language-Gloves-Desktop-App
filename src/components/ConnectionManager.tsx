@@ -16,11 +16,11 @@ export interface MotionData {
 }
 
 export interface ArmImuData {
-    q1: ImuData; // upper arm (triceps) armband  — id=1
-    q2: ImuData; // forearm armband              — id=2
+    q1: ImuData; // upper arm armband — id=1
+    q2: ImuData; // forearm armband   — id=2
 }
 
-interface ConnectionManagerProps {
+export interface ConnectionManagerProps {
     onSensorData?: (data: number[]) => void;
     onImuData?: (data: ImuData) => void;
     onMotionData?: (data: MotionData) => void;
