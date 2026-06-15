@@ -14,12 +14,15 @@ import DataRecorder from "./components/DataRecorder";
 import apiService, { PredictionResponse } from "./services/apiService";
 import UpdaterModal from "./components/UpdaterModal";
 import ArmbandCalibrator, { ArmbandCalibration } from "./components/ArmbandCalibrator";
+import DirectionCalibrator, { DirectionKey, DirectionRefs } from "./components/DirectionCalibrator";
 import "./App.css";
 
 // Default sensor calibration values for thermistors (physical glove)
-// Based on actual sensor readings from the glove
-const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348]; // straight position (higher values)
-const DEFAULT_MAXBENDS = [2832, 1922, 2105, 2279, 2323];  // fully bent position (lower values)
+// Positive-Ohm defaults: straight = low Ohm, bent = high Ohm (R = 330*(3.3/V - 1)).
+// These are approximate — user must calibrate for accurate predictions.
+// Values from TexsorvaV3 real-glove data (ADS1115 GAIN_TWOTHIRDS, 330Ω ref):
+const DEFAULT_BASELINES = [  850, 1370, 1480, 1040, 1760]; // straight (lower Ohm)
+const DEFAULT_MAXBENDS  = [ 1050, 1950, 2050, 1450, 2200]; // fully bent (higher Ohm)
 
 // ── Quaternion helpers (mirrors HandVisualization3D math) ─────────────────────
 // Used to apply the same IMU transformation chain before forwarding to Unity.
@@ -39,6 +42,46 @@ const rotateVec = (q: Quat, v: Vec3): Vec3 => {
 // Remap a BNO055 absolute quaternion (ENU: X=East, Y=North, Z=Up) to Unity world space.
 // Axis convention: Unity X ← BNO X (East→Right), Unity Y ← BNO Z (Up→Up), Unity Z ← -BNO Y (North→-Forward, handles LH flip)
 const remapBnoToUnity = (q: Quat): Quat => ({ w: q.w, x: q.x, y: q.z, z: -q.y });
+
+// ── Hand direction family disambiguation ─────────────────────────────────────
+// Maps each IMU-required letter to its family group.
+const LETTER_TO_FAMILY: Record<string, string> = {
+  'V': 'VHR', 'H': 'VHR', 'R': 'VHR',   // same flex, separated by wrist rotation
+  'K': 'KU',  'U': 'KU',                  // two-finger: down/sideways vs up/forward
+  'D': 'DG',  'G': 'DG',                  // index extended: up vs sideways
+  'L': 'LPQ', 'P': 'LPQ', 'Q': 'LPQ',   // L-shape: up / down-fwd / down-side
+  'A': 'AT',  'T': 'AT',                  // fist: thumb side / thumb tucked
+  'E': 'ES',  'S': 'ES',                  // tight curl vs fist-thumb-over
+};
+
+// For each family, which direction → which letter.
+// 'sideways' covers both left and right; the closest calibrated ref is used.
+const FAMILY_DIRECTION_MAP: Record<string, Partial<Record<DirectionKey, string>>> = {
+  'VHR': { up: 'V', forward: 'V', down: 'H', sideways: 'R' },
+  'KU':  { up: 'U', forward: 'U', down: 'K', sideways: 'K' },
+  'DG':  { up: 'D', forward: 'D', sideways: 'G', down: 'G' },
+  'LPQ': { up: 'L', forward: 'L', sideways: 'Q', down: 'P' },
+  'AT':  { up: 'A', forward: 'A', sideways: 'T', down: 'T' },
+  'ES':  { up: 'S', forward: 'S', sideways: 'E', down: 'E' },
+};
+
+// Classify a quaternion into the closest calibrated direction.
+// Uses |dot product| between unit quaternions: cos(half-angle between poses).
+// Returns null if no refs are calibrated or best match is below threshold (~45°).
+function classifyDirection(
+  q: [number,number,number,number],
+  refs: DirectionRefs,
+): DirectionKey | null {
+  const THRESHOLD = 0.70; // cos(45°/2) ≈ 0.924 strict; 0.70 is ~90° cone — lenient
+  let bestDir: DirectionKey | null = null;
+  let bestScore = -1;
+  for (const [dir, ref] of Object.entries(refs) as [DirectionKey, [number,number,number,number] | null][]) {
+    if (!ref) continue;
+    const dot = Math.abs(q[0]*ref[0] + q[1]*ref[1] + q[2]*ref[2] + q[3]*ref[3]);
+    if (dot > bestScore) { bestScore = dot; bestDir = dir; }
+  }
+  return bestScore >= THRESHOLD ? bestDir : null;
+}
 
 // ── Arm FK constants ─────────────────────────────────────────────────────────
 // Bone lengths in Unity world-space metres (1 unit ≈ 1 m in this scene).
@@ -103,10 +146,12 @@ const computeArmFK = (
     z:  uAV.z + fAV.z,                    // 0 at neutral, +z = body-forward
   };
 };
-// Fallback calibration used when the user has never run the calibrator.
-// These match SimulatorControl and have a proper wide range per finger.
-const SIMULATOR_BASELINES = [1560, 7070, 6130, 6560, 5880];
-const SIMULATOR_MAXBENDS  = [1160, 4670, 4730, 4700, 4190];
+// Fallback calibration used for the built-in WebGL simulator (isSimulating=true) AND
+// Legacy positive-ADC simulator constants (kept for reference only — no longer used).
+// Both the real glove and the current simulator output positive Ohm values
+// which use DEFAULT_BASELINES / DEFAULT_MAXBENDS directly.
+// const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
+// const SIMULATOR_MAXBENDS  = [2200, 1300, 1480, 1640, 1720];
 
 // Removed unused interface PredictionRecord
 
@@ -149,6 +194,9 @@ function App() {
   const handleImuData = useCallback((data: ImuData) => {
     currentImuRef.current = data;
     setCurrentImu(data);
+    // Update live direction classification (throttled by React batching)
+    const dir = classifyDirection([data.w, data.x, data.y, data.z], directionRefsRef.current);
+    setCurrentDirection(dir);
   }, []);
 
   // Motion data: linear acceleration + gyroscope (from 15-col firmware)
@@ -165,9 +213,18 @@ function App() {
     setCurrentArmImu(data);
   }, []);
 
+  // S-curve (smoothstep) applied after linear normalization to 0-1.
+  // Flattens extremes so noisy low/peak readings don't tweak fingers.
+  // Set to false to revert to plain linear normalization.
+  const FLEX_SCURVE_ENABLED = true;
+  const flexSmoothstep = (t: number): number => {
+    const c = Math.max(0, Math.min(1, t));
+    return c * c * (3 - 2 * c);
+  };
+
   // EMA (Exponential Moving Average) buffer for smoothing data sent to Unity/WebGL
   // Applied to raw ADC values before normalization — lower alpha = smoother but laggier
-  const PIPE_EMA_ALPHA = 0.25; // 0=frozen, 1=raw — 0.25 gives ~4-sample smoothing
+  const PIPE_EMA_ALPHA = 1.0; // 0=frozen, 1=raw (disabled — firmware EMA handles smoothing)
   const pipeEmaRef = useRef<number[] | null>(null);
   // Reference quaternion captured from the first IMU sample each Unity session.
   // Mirrors HandVisualization3D's refQuat so both show the same relative orientation.
@@ -248,18 +305,34 @@ function App() {
   const armbandCalRef = useRef(armbandCal);
   useEffect(() => { armbandCalRef.current = armbandCal; }, [armbandCal]);
 
-  // Calibration state
+  // Calibration state — auto-reset if saved values are positive but firmware now sends negatives
   const [baselines, setBaselines] = useState<number[]>(() => {
     try {
       const saved = localStorage.getItem('glove_baselines');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: number[] = JSON.parse(saved);
+        // Discard stored calibration if its sign doesn't match the current default format
+        // (e.g. old negative-Ohm stored when we now use positive-Ohm, or vice-versa)
+        if (Math.sign(parsed[0]) !== Math.sign(DEFAULT_BASELINES[0])) {
+          localStorage.removeItem('glove_baselines');
+          return DEFAULT_BASELINES;
+        }
+        return parsed;
+      }
     } catch {}
     return DEFAULT_BASELINES;
   });
   const [maxbends, setMaxbends] = useState<number[]>(() => {
     try {
       const saved = localStorage.getItem('glove_maxbends');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: number[] = JSON.parse(saved);
+        if (Math.sign(parsed[0]) !== Math.sign(DEFAULT_MAXBENDS[0])) {
+          localStorage.removeItem('glove_maxbends');
+          return DEFAULT_MAXBENDS;
+        }
+        return parsed;
+      }
     } catch {}
     return DEFAULT_MAXBENDS;
   });
@@ -272,6 +345,41 @@ function App() {
   const [minConfidence, setMinConfidence] = useState(0.6);
   const [duplicateWindowMs, setDuplicateWindowMs] = useState(500);
   const [isWordFinalized, setIsWordFinalized] = useState(false);
+
+
+  // Hand direction calibration refs (for family disambiguation — stored in localStorage)
+  const emptyDirRefs = (): DirectionRefs => ({ up: null, forward: null, down: null, sideways: null });
+  const [directionRefs, setDirectionRefs] = useState<DirectionRefs>(() => {
+    try {
+      const saved = localStorage.getItem('direction_refs');
+      if (saved) return { ...emptyDirRefs(), ...JSON.parse(saved) };
+    } catch { /* ignore */ }
+    return emptyDirRefs();
+  });
+  const directionRefsRef = useRef<DirectionRefs>(directionRefs);
+  const [currentDirection, setCurrentDirection] = useState<DirectionKey | null>(null);
+
+  const recordDirection = (dir: DirectionKey) => {
+    const imu = currentImuRef.current;
+    if (!imu) return;
+    const q: [number,number,number,number] = [imu.w, imu.x, imu.y, imu.z];
+    const next = { ...directionRefsRef.current, [dir]: q };
+    directionRefsRef.current = next;
+    setDirectionRefs(next);
+    localStorage.setItem('direction_refs', JSON.stringify(next));
+  };
+  const clearDirection = (dir: DirectionKey) => {
+    const next = { ...directionRefsRef.current, [dir]: null };
+    directionRefsRef.current = next;
+    setDirectionRefs(next);
+    localStorage.setItem('direction_refs', JSON.stringify(next));
+  };
+  const clearAllDirections = () => {
+    const next = emptyDirRefs();
+    directionRefsRef.current = next;
+    setDirectionRefs(next);
+    localStorage.removeItem('direction_refs');
+  };
 
   // Real-time prediction state (for continuous streaming)
   const isRealTimePredicting = useRef(false);
@@ -506,20 +614,20 @@ function App() {
 
     // Always send normalized 0-1 values (both local model and cloud API now expect this)
 
-    // Use SIMULATOR calibration when: (a) in simulator mode, or (b) glove connected but user
-    // never ran the calibrator (baselines still equal the narrow factory defaults).
-    const useSerialSimulatorCal = connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
-    const calBaselines = (isSimulating || useSerialSimulatorCal) ? SIMULATOR_BASELINES : baselines;
-    const calMaxbends  = (isSimulating || useSerialSimulatorCal) ? SIMULATOR_MAXBENDS  : maxbends;
+    // Both real glove and simulator use positive Ohm format — always use calibrated baselines.
+    const calBaselines = baselines;
+    const calMaxbends  = maxbends;
 
     // Normalize flex (channels 0-4) to 0-1; pass IMU quaternion (channels 5-8) through as-is.
     // The 21-letter model expects 9 columns — sending real IMU improves accuracy for
     // IMU-trained letters (B, D, G, H, K, L, P, Q, R, W). Falls back to 5-col gracefully.
+    //
     const convertedSamples = samples.map(sample => {
       const flexNorm = sample.slice(0, 5).map((value, i) => {
         const thermBaseline = calBaselines[i];
         const thermMaxBend  = calMaxbends[i];
-        return Math.max(0, Math.min(1, (thermBaseline - value) / (thermBaseline - thermMaxBend)));
+        const linear = Math.max(0, Math.min(1, (thermBaseline - value) / (thermBaseline - thermMaxBend)));
+        return FLEX_SCURVE_ENABLED ? flexSmoothstep(linear) : linear;
       });
       const imuPart = sample.length >= 9 ? sample.slice(5, 9) : [];
       return [...flexNorm, ...imuPart];
@@ -539,13 +647,13 @@ function App() {
     };
 
     try {
-      // Include current IMU quaternion so the local two-staged model can run stage-2
-      // disambiguation for letters G, H, K, P, Q, R, etc. that look flex-identical.
+      // IMU is still forwarded for legacy cloud API compatibility.
+      // The local server's STAGE1_ONLY flag controls whether Stage 2 runs server-side.
       const imuPayload = currentImuRef.current
         ? [currentImuRef.current.w, currentImuRef.current.x, currentImuRef.current.y, currentImuRef.current.z] as [number, number, number, number]
         : undefined;
 
-      console.log('[App] IMU sent to model:', imuPayload ?? 'none (no IMU data)');
+      console.log('[App] IMU sent to model:', imuPayload ? 'yes' : 'none (no IMU data)');
 
       const response = await apiService.predict({
         flex_sensors: convertedSamples,
@@ -557,9 +665,45 @@ function App() {
       debugData.apiResponse = response;
       setDebugLogData(debugData);
 
+      // ── Direction-based family override ───────────────────────────────────────
+      // Two cases:
+      //   A) Model returned a family name directly (Stage 2 was skipped because
+      //      direction calibration is active) — e.g. response.letter = "VHR"
+      //   B) Model returned a specific letter that belongs to a family — override
+      //      if direction calibration can give a better answer.
+      // In both cases the confidence from Stage 1 is preserved (not downgraded).
+      let finalResponse = response;
+      // Case A: response.letter is itself a family name
+      const directFamily = FAMILY_DIRECTION_MAP[response.letter] ? response.letter : null;
+      // Case B: response.letter is a specific letter that maps to a family
+      const memberFamily = LETTER_TO_FAMILY[response.letter] ?? null;
+      const family = directFamily ?? memberFamily;
+
+      if (family) {
+        const imuQ = currentImuRef.current;
+        if (imuQ) {
+          const dir = classifyDirection(
+            [imuQ.w, imuQ.x, imuQ.y, imuQ.z],
+            directionRefsRef.current,
+          );
+          if (dir) {
+            const overrideLetter = FAMILY_DIRECTION_MAP[family]?.[dir];
+            if (overrideLetter && overrideLetter !== response.letter) {
+              console.log(`[Dir] Family ${family}: model=${response.letter} dir=${dir} → override=${overrideLetter}`);
+              finalResponse = { ...response, letter: overrideLetter };
+            }
+          } else if (directFamily) {
+            // Model returned a family name but no direction is classified yet —
+            // fall back to first member of the family so we always show a letter.
+            const fallback = Object.values(FAMILY_DIRECTION_MAP[family])[0];
+            if (fallback) finalResponse = { ...response, letter: fallback };
+          }
+        }
+      }
+
       // Stable mode: only show prediction if confidence is above threshold
-      if (!stableMode || response.confidence >= STABLE_CONFIDENCE_THRESHOLD) {
-        setCurrentPrediction(response);
+      if (!stableMode || finalResponse.confidence >= STABLE_CONFIDENCE_THRESHOLD) {
+        setCurrentPrediction(finalResponse);
       } else {
         setCurrentPrediction(null);
       }
@@ -570,27 +714,27 @@ function App() {
         const timeSinceLastPrediction = currentTime - lastPredictionTimeRef.current;
         
         // Only add if it's a different letter OR enough time has passed
-        const isDifferentLetter = response.letter !== lastPredictedLetterRef.current;
+        const isDifferentLetter = finalResponse.letter !== lastPredictedLetterRef.current;
         const enoughTimePassed = timeSinceLastPrediction > duplicateWindowMs;
         
         if (isWordFinalized) {
           console.log('[App] Word was finalized, clearing and starting new word');
-          setDetectedLetters([response.letter]);
+          setDetectedLetters([finalResponse.letter]);
           setIsWordFinalized(false);
-          lastPredictedLetterRef.current = response.letter;
+          lastPredictedLetterRef.current = finalResponse.letter;
           lastPredictionTimeRef.current = currentTime;
-        } else if (response.confidence >= minConfidence && (isDifferentLetter || enoughTimePassed)) {
+        } else if (finalResponse.confidence >= minConfidence && (isDifferentLetter || enoughTimePassed)) {
           // In real-time mode, only add if it's a new letter or enough time passed
           if (isDifferentLetter || enoughTimePassed) {
             setDetectedLetters(prev => {
-              const newLetters = [...prev, response.letter];
-              console.log(`[App] Added letter "${response.letter}" to word. Current word: "${newLetters.join('')}"`);
+              const newLetters = [...prev, finalResponse.letter];
+              console.log(`[App] Added letter "${finalResponse.letter}" to word. Current word: "${newLetters.join('')}"`);
               return newLetters;
             });
-            lastPredictedLetterRef.current = response.letter;
+            lastPredictedLetterRef.current = finalResponse.letter;
             lastPredictionTimeRef.current = currentTime;
           } else {
-            console.log(`[App] Skipping duplicate letter "${response.letter}"`);
+            console.log(`[App] Skipping duplicate letter "${finalResponse.letter}"`);
           }
         }
       } else {
@@ -599,18 +743,18 @@ function App() {
         const timeSinceLastPrediction = currentTime - lastPredictionTimeRef.current;
         
         if (timeSinceLastPrediction > 1000) { // Speak only once per second
-          console.log('[App] Single letter mode - speaking letter:', response.letter);
+          console.log('[App] Single letter mode - speaking letter:', finalResponse.letter);
           if ('speechSynthesis' in window) {
             // Cancel any existing speech first
             console.log('[App] Cancelling existing speech');
             window.speechSynthesis.cancel();
             
-            console.log('[App] Speaking letter:', response.letter);
-            const utterance = new SpeechSynthesisUtterance(response.letter);
+            console.log('[App] Speaking letter:', finalResponse.letter);
+            const utterance = new SpeechSynthesisUtterance(finalResponse.letter);
             utterance.lang = 'en-US';
             utterance.rate = 0.8;
-            utterance.onstart = () => console.log('[App] TTS started for:', response.letter);
-            utterance.onend = () => console.log('[App] TTS ended for:', response.letter);
+            utterance.onstart = () => console.log('[App] TTS started for:', finalResponse.letter);
+            utterance.onend = () => console.log('[App] TTS ended for:', finalResponse.letter);
             window.speechSynthesis.speak(utterance);
             
             lastPredictionTimeRef.current = currentTime;
@@ -657,13 +801,13 @@ function App() {
       pipeEmaRef.current = pipeEmaRef.current.map((v, i) => v + PIPE_EMA_ALPHA * (raw5[i] - v));
       const smoothed = pipeEmaRef.current;
 
-      // Normalize flex sensors to 0-1
-      const useSimCal = isSimulating || baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
-      const calB = useSimCal ? SIMULATOR_BASELINES : baselines;
-      const calM = useSimCal ? SIMULATOR_MAXBENDS  : maxbends;
-      const normalizedFlex = smoothed.map((v, i) =>
-        Math.max(0, Math.min(1, (calB[i] - v) / (calB[i] - calM[i])))
-      );
+      // Normalize flex sensors to 0-1 using calibrated baselines (positive Ohm format)
+      const calB = baselines;
+      const calM = maxbends;
+      const normalizedFlex = smoothed.map((v, i) => {
+        const linear = Math.max(0, Math.min(1, (calB[i] - v) / (calB[i] - calM[i])));
+        return FLEX_SCURVE_ENABLED ? flexSmoothstep(linear) : linear;
+      });
 
       // IMU processing:
       //   1. Capture reference from first sample (reset when pipe/webgl restarts or user recalibrates)
@@ -684,7 +828,7 @@ function App() {
         // Axis remap for correctly-mounted BNO055 (right-side up).
         // Negate qRel.y (→ Unity X) to fix the pitch inversion that appeared
         // when the sensor was flipped to its correct orientation.
-        const qRelViz: Quat = { w: qRel.w, x: -qRel.y, y: qRel.z, z: -qRel.x };
+        const qRelViz: Quat = { w: qRel.w, x: -qRel.y, y: -qRel.z, z: qRel.x };
         imuXYZ = [qRelViz.x, qRelViz.y, qRelViz.z];
       }
 
@@ -843,9 +987,9 @@ function App() {
 
     // Use the same calibration selection as makePrediction so recorded data
     // and prediction inputs are always normalized identically.
-    const useSimCal = baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1);
-    const expBaselines = useSimCal ? SIMULATOR_BASELINES : baselines;
-    const expMaxbends  = useSimCal ? SIMULATOR_MAXBENDS  : maxbends;
+    // Both real glove and simulator use positive Ohm format — always use calibrated baselines.
+    const expBaselines = baselines;
+    const expMaxbends  = maxbends;
 
     allData.forEach(({ letter, samples }) => {
       samples.forEach(sample => {
@@ -873,7 +1017,7 @@ function App() {
     link.click();
     window.URL.revokeObjectURL(url);
 
-    const calLabel = useSimCal ? 'SIMULATOR (fallback)' : 'USER CALIBRATION';
+    const calLabel = isSimulating ? 'SIMULATOR (fallback)' : 'USER CALIBRATION';
     console.log(`[App] Exported ${allData.length} recordings to NORMALIZED CSV`);
     console.log(`[App] Calibration used: ${calLabel} — Baselines: ${expBaselines}, Maxbends: ${expMaxbends}`);
     alert(`✅ Data exported as NORMALIZED values! ${allData.reduce((acc, r) => acc + r.samples.length, 0)} samples saved to CSV`);
@@ -1200,6 +1344,17 @@ function App() {
           </div>
         )}
 
+
+        {/* Hand direction calibration for family disambiguation */}
+        <DirectionCalibrator
+          currentImu={currentImu}
+          directionRefs={directionRefs}
+          currentDirection={currentDirection}
+          onRecord={recordDirection}
+          onClear={clearDirection}
+          onClearAll={clearAllDirections}
+        />
+
         {/* WebGL 3D Twin + Prediction View side by side */}
         {webglEnabled && (
           <div style={{
@@ -1462,13 +1617,9 @@ function App() {
 
         {/* 3D Hand Visualizer + Sensor Display (moved below Data Recorder) */}
         {(() => {
-          const SIMULATOR_BASELINES = [2700, 1650, 1850, 2110, 2125];
-          const SIMULATOR_MAXBENDS = [2200, 1300, 1480, 1640, 1720];
-          const useSimulatorCal = isSimulating || (
-            connectedDevice && baselines.every((b, i) => Math.abs(b - DEFAULT_BASELINES[i]) < 1)
-          );
-          const calBaselines = useSimulatorCal ? SIMULATOR_BASELINES : baselines;
-          const calMaxbends = useSimulatorCal ? SIMULATOR_MAXBENDS : maxbends;
+          // Both real glove and simulator use positive Ohm format — always use calibrated baselines.
+          const calBaselines = baselines;
+          const calMaxbends = maxbends;
           return (
             <>
               {/* Top row: 2-column grid */}

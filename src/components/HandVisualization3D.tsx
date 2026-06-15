@@ -35,8 +35,8 @@ const HAND_SKELETON = {
 const FINGER_COLORS = [0xef4444, 0xf59e0b, 0x10b981, 0x3b82f6, 0x8b5cf6];
 const FINGER_NAMES  = ['Thumb','Index','Middle','Ring','Pinky'];
 
-const DEFAULT_BASELINES = [2871, 1949, 2135, 2303, 2348];
-const DEFAULT_MAXBENDS  = [2832, 1922, 2105, 2279, 2323];
+const DEFAULT_BASELINES = [-1200, -8000, -10000, -8000, -6000];
+const DEFAULT_MAXBENDS  = [-1800, -35000, -30000, -35000, -12000];
 
 // ── Pure math helpers (no React) ──────────────────────────────────────────────
 const rotatePoint = (point: number[], angle: number, pivot: number[]): number[] => {
@@ -514,8 +514,8 @@ export default function HandVisualization3D({
 
       {onTestSample && (
         <div style={{ display:'flex', gap:'0.5rem', marginTop:'0.75rem', justifyContent:'center', flexWrap:'wrap' }}>
-          <button onClick={() => onTestSample([2700,1650,1850,2110,2125])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>{t('hand_viz.test_straight')}</button>
-          <button onClick={() => onTestSample([2200,1300,1480,1640,1720])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>{t('hand_viz.test_bent')}</button>
+          <button onClick={() => onTestSample([...baselines])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>{t('hand_viz.test_straight')}</button>
+          <button onClick={() => onTestSample([...maxbends])} style={{ padding:'0.5rem 1rem', borderRadius:'6px', border:'1px solid '+borderColor, background:bgCard, color:textPrimary, fontSize:'0.875rem', cursor:'pointer' }}>{t('hand_viz.test_bent')}</button>
         </div>
       )}
     </div>

@@ -56,12 +56,13 @@ export default function Calibrator({ onCalibrationComplete, isConnected, current
   const calcFingerCalib = (fc: FingerCalibration): Pick<FingerCalibration, 'baseline' | 'maxbend'> => {
     const straightMedian = calculateMedian(fc.straightSamples);
     const bentMedian = calculateMedian(fc.bentSamples);
-    const baseline = Math.max(straightMedian, bentMedian);
-    const maxbend = Math.min(straightMedian, bentMedian);
-    const range = baseline - maxbend;
+    // Positive Ohm format: straight = lower Ohm, bent = higher Ohm
+    const baseline = Math.min(straightMedian, bentMedian); // straight position
+    const maxbend  = Math.max(straightMedian, bentMedian); // bent position
+    const range = maxbend - baseline;
     return {
-      baseline: Math.round(baseline + range * 0.05),
-      maxbend: Math.round(maxbend - range * 0.05),
+      baseline: Math.round(baseline - range * 0.05), // slight margin below straight
+      maxbend:  Math.round(maxbend  + range * 0.05), // slight margin above bent
     };
   };
 

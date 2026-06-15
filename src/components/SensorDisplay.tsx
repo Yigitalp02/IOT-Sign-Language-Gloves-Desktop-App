@@ -26,39 +26,44 @@ const SensorDisplay: React.FC<SensorDisplayProps> = ({
   // const { theme } = useTheme(); // Removed unused
   const { t } = useTranslation();
 
+  // S-curve toggle — must match App.tsx FLEX_SCURVE_ENABLED so bars reflect what the model sees.
+  const FLEX_SCURVE_ENABLED = true;
+  const flexSmoothstep = (t: number) => { const c = Math.max(0, Math.min(1, t)); return c * c * (3 - 2 * c); };
+
   // Calculate color based on calibration (if provided) or use per-finger defaults
-  const getBarColor = (value: number, fingerIndex: number) => {
-    if (baselines && maxbends && baselines[fingerIndex] && maxbends[fingerIndex]) {
-      const baseline = baselines[fingerIndex];
-      const maxbend = maxbends[fingerIndex];
-      
-      // Normalize value: 0 = straight (baseline), 1 = fully bent (maxbend)
-      // For thermistors: baseline > maxbend (higher = straight, lower = bent)
-      const normalized = (value - baseline) / (maxbend - baseline);
-      
-      // Color thresholds based on bend percentage
-      if (normalized < 0.45) return '#10b981'; // Green - mostly straight
-      if (normalized < 0.75) return '#fbbf24'; // Yellow - partially bent
-      return '#ef4444'; // Red - mostly/fully bent
+  // Fallback calibration constants (mirror App.tsx DEFAULT_BASELINES / DEFAULT_MAXBENDS)
+  // Only used when the parent does not supply baselines/maxbends props.
+  // Positive Ohm format: straight = low Ohm, bent = high Ohm.
+  const FALLBACK_BASELINES = [  850, 1370, 1480, 1040, 1760]; // straight (lower Ohm)
+  const FALLBACK_MAXBENDS  = [ 1050, 1950, 2050, 1450, 2200]; // fully bent (higher Ohm)
+
+  const resolveCalibration = (_value: number, fingerIndex: number) => {
+    if (baselines && maxbends &&
+        baselines[fingerIndex] !== undefined && maxbends[fingerIndex] !== undefined) {
+      return { baseline: baselines[fingerIndex], maxbend: maxbends[fingerIndex] };
     }
-    
-    // Fallback to fixed thresholds if no calibration
-    if (value > 2000) return '#10b981'; // Green - straight
-    if (value > 1500) return '#fbbf24'; // Yellow - partially bent
-    return '#ef4444'; // Red - fully bent
+    return {
+      baseline: FALLBACK_BASELINES[fingerIndex] ?? -1200,
+      maxbend:  FALLBACK_MAXBENDS[fingerIndex]  ?? -1800,
+    };
+  };
+
+  const getBarColor = (value: number, fingerIndex: number) => {
+    const { baseline, maxbend } = resolveCalibration(value, fingerIndex);
+    const linear = (value - baseline) / (maxbend - baseline); // 0=straight, 1=bent
+    const normalized = FLEX_SCURVE_ENABLED ? flexSmoothstep(linear) : Math.max(0, Math.min(1, linear));
+    // Visual is inverted: wide green = straight, narrow red = bent
+    if (normalized < 0.25) return '#10b981'; // Green  - mostly straight
+    if (normalized < 0.55) return '#fbbf24'; // Yellow - partially bent
+    return '#ef4444';                         // Red    - mostly/fully bent
   };
 
   const getBarWidth = (value: number, fingerIndex: number) => {
-    if (baselines && maxbends && baselines[fingerIndex] && maxbends[fingerIndex]) {
-      const baseline = baselines[fingerIndex];
-      const maxbend = maxbends[fingerIndex];
-      const min = Math.min(baseline, maxbend);
-      const max = Math.max(baseline, maxbend);
-      return `${((value - min) / (max - min)) * 100}%`;
-    }
-    
-    // Fallback to fixed range
-    return `${((value - 800) / (2700 - 800)) * 100}%`;
+    const { baseline, maxbend } = resolveCalibration(value, fingerIndex);
+    const linear = (value - baseline) / (maxbend - baseline); // 0=straight, 1=bent
+    const normalized = FLEX_SCURVE_ENABLED ? flexSmoothstep(linear) : Math.max(0, Math.min(1, linear));
+    const display = 1 - normalized;     // invert: wide when straight
+    return `${display * 100}%`;
   };
 
   const fingerNames = [

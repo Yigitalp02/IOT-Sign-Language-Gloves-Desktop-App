@@ -607,7 +607,7 @@ fn start_reading_serial(
                                 // v5 armband format: all 15 cols + Q1 (upper arm) + Q2 (forearm)
                                 let raw_flex: Vec<i64> = values[..5]
                                     .iter()
-                                    .filter_map(|s| s.trim().parse::<i64>().ok())
+                                    .filter_map(|s| s.trim().parse::<f64>().ok().map(|f| f.round() as i64))
                                     .collect();
                                 let floats: Vec<f32> = values[5..15]
                                     .iter()
@@ -644,7 +644,7 @@ fn start_reading_serial(
                             } else if values.len() == 15 {
                                 let raw_flex: Vec<i64> = values[..5]
                                     .iter()
-                                    .filter_map(|s| s.trim().parse::<i64>().ok())
+                                    .filter_map(|s| s.trim().parse::<f64>().ok().map(|f| f.round() as i64))
                                     .collect();
                                 let floats: Vec<f32> = values[5..]
                                     .iter()
@@ -675,7 +675,7 @@ fn start_reading_serial(
                                 // v3 format: 5 thermistors + 4 quaternion floats (w, x, y, z)
                                 let raw_flex9: Vec<i64> = values[..5]
                                     .iter()
-                                    .filter_map(|s| s.trim().parse::<i64>().ok())
+                                    .filter_map(|s| s.trim().parse::<f64>().ok().map(|f| f.round() as i64))
                                     .collect();
                                 let quats: Vec<f32> = values[5..]
                                     .iter()
@@ -1418,7 +1418,7 @@ fn connect_wifi(
                     if values.len() == 23 {
                         // v5 armband format: all 15 cols + Q1 (upper arm) + Q2 (forearm)
                         let thermistors: Vec<i32> = values[..5]
-                            .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
+                            .iter().filter_map(|s| s.trim().parse::<f64>().ok().map(|f| f.round() as i32)).collect();
                         let floats: Vec<f32> = values[5..15]
                             .iter().filter_map(|s| s.trim().parse::<f32>().ok()).collect();
                         let arm_floats: Vec<f32> = values[15..]
@@ -1440,7 +1440,7 @@ fn connect_wifi(
                         }
                     } else if values.len() == 15 {
                         let thermistors: Vec<i32> = values[..5]
-                            .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
+                            .iter().filter_map(|s| s.trim().parse::<f64>().ok().map(|f| f.round() as i32)).collect();
                         let floats: Vec<f32> = values[5..]
                             .iter().filter_map(|s| s.trim().parse::<f32>().ok()).collect();
                         if thermistors.len() == 5 && floats.len() == 10 {
@@ -1456,7 +1456,7 @@ fn connect_wifi(
                         }
                     } else if values.len() == 9 {
                         let thermistors: Vec<i32> = values[..5]
-                            .iter().filter_map(|s| s.trim().parse::<i32>().ok()).collect();
+                            .iter().filter_map(|s| s.trim().parse::<f64>().ok().map(|f| f.round() as i32)).collect();
                         let quats: Vec<f32> = values[5..]
                             .iter().filter_map(|s| s.trim().parse::<f32>().ok()).collect();
                         if thermistors.len() == 5 && quats.len() == 4 {
